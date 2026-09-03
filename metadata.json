@@ -1,0 +1,10 @@
+{
+  "name": "SHIKKUM",
+  "description": "Sistema profesional de administración de eventos, pricing dinámico, ticketing, pagos y control de acceso seguro mediante scanner QR.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
