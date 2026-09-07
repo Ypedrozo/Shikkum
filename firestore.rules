@@ -1,0 +1,248 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Funciones auxiliares de seguridad basadas en Custom Claims y Firestore
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'admin' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true)
+      );
+    }
+
+    function isCashier() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'cashier' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cashier' &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true)
+      );
+    }
+
+    function isGateOperator() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'gate_operator' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'gate_operator' &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true)
+      );
+    }
+
+    // Colección: /users/{userId}
+    match /users/{userId} {
+      // Cualquier usuario autenticado puede leer su propio documento; el administrador puede leer todos.
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+
+      // Solo el administrador (o el backend/Cloud Function con Admin SDK) puede crear usuarios.
+      allow create: if isAdmin();
+
+      // Actualización:
+      // - El administrador puede modificar cualquier campo (incluyendo role e isActive).
+      // - El usuario propietario SOLO puede actualizar campos no críticos (como displayName o lastLoginAt),
+      //   pero NUNCA puede modificar su propio role, isActive, ni uid.
+      allow update: if isAdmin() || (
+        isOwner(userId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isActive', 'uid'])
+      );
+
+      // Solo el administrador puede eliminar documentos de usuario.
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // Colección: /customers/{customerId}
+    // ==========================================
+    match /customers/{customerId} {
+      // Admin y Cobranzas pueden consultar clientes
+      allow read: if isAdmin() || isCashier();
+
+      // Admin puede crear cualquier cliente
+      // Cobranzas puede crear clientes comerciales básicos
+      allow create: if isAdmin() || (
+        isCashier() &&
+        request.resource.data.keys().hasAll(['fullName', 'email', 'isCommunityMember', 'isActive', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy']) &&
+        request.resource.data.createdBy == request.auth.uid
+      );
+
+      // Admin puede actualizar cualquier campo del cliente.
+      // Cobranzas SOLO puede actualizar campos comerciales básicos (nombre, correo, teléfono, documento, notas),
+      // pero NUNCA puede modificar isActive, createdAt ni createdBy.
+      allow update: if isAdmin() || (
+        isCashier() &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isActive', 'createdAt', 'createdBy'])
+      );
+
+      // Solo el administrador puede eliminar físicamente un cliente (aunque se prefiere soft-delete con isActive: false)
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // Colección: /events/{eventId}
+    // ==========================================
+    match /events/{eventId} {
+      // Admin y Cobranzas pueden consultar eventos
+      allow read: if isAdmin() || isCashier();
+
+      // Solo Admin puede crear, editar o cambiar estado de eventos
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ==========================================
+    // Colección: /price_rules/{priceRuleId}
+    // ==========================================
+    match /price_rules/{priceRuleId} {
+      // Admin y Cobranzas pueden consultar reglas de precio
+      allow read: if isAdmin() || isCashier();
+
+      // Solo Admin puede crear, editar, activar/desactivar o eliminar reglas
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ==========================================
+    // Colección: /orders/{orderId}
+    // Subcolección: /orders/{orderId}/attendees/{attendeeId}
+    // ==========================================
+    match /orders/{orderId} {
+      // Admin y Cobranzas pueden consultar órdenes comerciales
+      // Gate Operator tiene acceso DENEGADO
+      allow read: if isAdmin() || isCashier();
+
+      // Creación de orden: Solo Admin o Cobranzas
+      // Debe registrarse en status PENDING_PAYMENT o DRAFT
+      // El creador debe coincidir con el usuario autenticado
+      allow create: if (isAdmin() || isCashier()) &&
+        request.resource.data.status in ['DRAFT', 'PENDING_PAYMENT'] &&
+        request.resource.data.createdBy == request.auth.uid &&
+        request.resource.data.currency == 'USD' &&
+        request.resource.data.keys().hasAll([
+          'orderCode', 'customerId', 'customerName', 'eventId', 'eventTitle',
+          'attendeeCount', 'subtotal', 'total', 'status', 'currency',
+          'createdBy', 'createdAt', 'updatedAt'
+        ]);
+
+      // Actualización:
+      // - Solo el Administrador puede actualizar una orden (exclusivamente para cancelar órdenes en PENDING_PAYMENT).
+      // - NUNCA se permite pasar a PAID desde el cliente (solo mediante Cloud Function).
+      // - NUNCA se permite cancelar una orden ya PAGADA (PAID).
+      // - NUNCA se permite alterar precios congelados: subtotal, total, currency, orderCode, customerId, eventId, attendeeCount.
+      allow update: if isAdmin() &&
+        resource.data.status == 'PENDING_PAYMENT' &&
+        request.resource.data.status == 'CANCELLED' &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'orderCode', 'customerId', 'eventId', 'subtotal', 'total', 'currency', 'createdBy', 'createdAt', 'attendeeCount'
+        ]);
+
+      // Eliminación física PROHIBIDA: las órdenes son registros inmutables de auditoría
+      allow delete: if false;
+
+      // Subcolección de Asistentes con Snapshot de Precios
+      match /attendees/{attendeeId} {
+        // Admin y Cobranzas pueden consultar asistentes
+        // Gate Operator tiene acceso DENEGADO
+        allow read: if isAdmin() || isCashier();
+
+        // Creación atómica al registrar la orden
+        allow create: if (isAdmin() || isCashier()) &&
+          request.resource.data.orderId == orderId &&
+          request.resource.data.ageAtPurchase >= 0 &&
+          request.resource.data.currency == 'USD' &&
+          request.resource.data.keys().hasAll([
+            'orderId', 'customerId', 'eventId', 'fullName',
+            'ageAtPurchase', 'isCommunityMemberAtPurchase',
+            'priceRuleId', 'priceRuleName', 'unitPrice', 'subtotal', 'currency', 'createdAt'
+          ]);
+
+        // Modificación o eliminación física de asistentes en orden confirmada PROHIBIDAS
+        allow update, delete: if false;
+      }
+    }
+
+    // ==========================================
+    // Colección: /payments/{paymentId}
+    // ==========================================
+    match /payments/{paymentId} {
+      // Admin y Cobranzas pueden consultar registros de pagos
+      // Gate Operator tiene acceso DENEGADO
+      allow read: if isAdmin() || isCashier();
+
+      // Registro de pago inicial: Admin o Cobranzas
+      // Solo en estado PENDING con campos obligatorios de auditoría.
+      // NUNCA se permite que el cliente lo cree directamente como CONFIRMED ni que asigne confirmedBy.
+      allow create: if (isAdmin() || isCashier()) &&
+        request.resource.data.status == 'PENDING' &&
+        request.resource.data.registeredBy == request.auth.uid &&
+        request.resource.data.currency == 'USD' &&
+        request.resource.data.amount > 0 &&
+        request.resource.data.keys().hasAll([
+          'orderId', 'orderCode', 'amount', 'currency', 'method',
+          'status', 'registeredBy', 'registeredAt'
+        ]) &&
+        !request.resource.data.keys().hasAny(['confirmedBy', 'confirmedAt', 'rejectedBy', 'rejectedAt']);
+
+      // Las confirmaciones (CONFIRMED) y rechazos (REJECTED) se realizan
+      // EXCLUSIVAMENTE a través de Cloud Functions con Admin SDK.
+      // Se prohíben actualizaciones directas desde el SDK de cliente.
+      allow update: if false;
+
+      // Eliminación física PROHIBIDA: registros contables inmutables
+      allow delete: if false;
+    }
+
+    // ==========================================
+    // Colección: /tickets/{ticketId} (Fase 6.1 Endurecido)
+    // ==========================================
+    match /tickets/{ticketId} {
+      // Solo Administrador y Cobranzas pueden consultar boletos directamente
+      // (para impresión, entrega física en taquilla o soporte al cliente).
+      // El Operador de Puerta (gate_operator) tiene lectura directa DENEGADA estrictamente
+      // para impedir descarga masiva, enumeración o filtración de qrTokens.
+      // Toda validación en puerta se realiza exclusivamente mediante la Cloud Function 'validateTicketAccess'.
+      allow read: if isAdmin() || isCashier();
+
+      // Emisión, cancelación y consumo de boletos se realizan
+      // EXCLUSIVAMENTE a través de Cloud Functions con Admin SDK.
+      // Se prohíben estrictamente modificaciones directas desde el cliente.
+      allow create, update, delete: if false;
+    }
+
+    // ==========================================
+    // Colección: /access_logs/{logId} (Fase 6)
+    // ==========================================
+    match /access_logs/{logId} {
+      // Admin y Operador de Puerta pueden consultar auditoría de accesos
+      allow read: if isAdmin() || isGateOperator();
+
+      // Escrituras exclusivas de Cloud Functions con Admin SDK
+      allow create, update, delete: if false;
+    }
+
+    // ==========================================
+    // Colección: /email_dispatches/{dispatchId} (Fase 7)
+    // ==========================================
+    match /email_dispatches/{dispatchId} {
+      // Admin y Cobranzas pueden consultar los registros de auditoría de envíos y reenvíos
+      // El Operador de Puerta (gate_operator) y usuarios no autorizados tienen acceso DENEGADO
+      allow read: if isAdmin() || isCashier();
+
+      // Las creaciones y modificaciones se realizan EXCLUSIVAMENTE a través de
+      // Cloud Functions con Admin SDK para garantizar idempotencia, auditoría y
+      // prevenir la falsificación de status, sentAt, retryCount o destinatarios.
+      allow write: if false;
+    }
+
+    // Regla de bloqueo estricto por defecto para cualquier otra colección no autorizada
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

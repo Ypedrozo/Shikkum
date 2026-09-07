@@ -1,0 +1,78 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Funciones auxiliares para validación de claims y tokens de autenticación
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdminOrCashier() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'cashier'
+      );
+    }
+
+    function isValidProofContentType() {
+      return request.resource.contentType in [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'application/pdf'
+      ];
+    }
+
+    function isValidProofSize() {
+      return request.resource.size <= 5 * 1024 * 1024; // Máximo 5MB
+    }
+
+    // Comprobantes de pago de órdenes: /payment_proofs/{orderId}/{fileName}
+    match /payment_proofs/{orderId}/{fileName} {
+      // Lectura privada: Solo Administrador y Cobranzas pueden consultar comprobantes
+      // Acceso público DENEGADO estrictamente
+      allow read: if isAdminOrCashier();
+
+      // Subida de comprobantes: Solo Admin o Cobranzas, con validación de tipo y tamaño
+      allow create: if isAdminOrCashier() &&
+        isValidProofContentType() &&
+        isValidProofSize();
+
+      // Modificación o eliminación PROHIBIDAS: los comprobantes son documentos de auditoría inmutables
+      allow update, delete: if false;
+    }
+
+    // Documentos PDF y paquetes de entradas: /ticket_documents/{orderOrTicketId}/{fileName}
+    match /ticket_documents/{orderOrTicketId}/{fileName} {
+      // Solo Administrador y Cobranzas pueden descargar documentos de boletos
+      // El Operador de Puerta y usuarios públicos tienen acceso denegado
+      allow read: if isAuthenticated() && (
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'cashier'
+      );
+      allow write: if false; // Solo backend con Admin SDK
+    }
+
+    // Archivos o imágenes de boletos y QR: /tickets/{ticketId}/{fileName}
+    match /tickets/{ticketId}/{fileName} {
+      allow read: if isAuthenticated() && (
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'cashier'
+      );
+      allow write: if false;
+    }
+
+    match /ticket_qr/{ticketId}/{fileName} {
+      allow read: if isAuthenticated() && (
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'cashier'
+      );
+      allow write: if false;
+    }
+
+    // Regla de bloqueo estricto por defecto para cualquier otra ruta de Storage
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
