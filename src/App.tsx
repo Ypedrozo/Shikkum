@@ -24,29 +24,64 @@ import { GateLayout } from './layouts/GateLayout';
 import { authService } from './services/auth.service';
 
 /**
+ * Resuelve la ruta canónica soportando GitHub Pages en subcarpetas y Hash routing
+ */
+const resolveRoutePath = (): string => {
+  // 1. Si hay un hash (ej: #/cashier o #cashier), tiene máxima prioridad en GitHub Pages
+  if (typeof window !== 'undefined' && window.location.hash) {
+    const rawHash = window.location.hash.replace(/^#\/?/, '/');
+    if (rawHash && rawHash !== '/') {
+      return rawHash.startsWith('/') ? rawHash : `/${rawHash}`;
+    }
+  }
+
+  // 2. Si es por pathname:
+  if (typeof window !== 'undefined') {
+    const pathname = window.location.pathname;
+    if (!pathname || pathname === '/') {
+      return '/login';
+    }
+
+    // Si la ruta contiene subcarpeta de repositorio en GitHub Pages (ej: /shikkum-events/cashier)
+    const knownPrefixes = ['/login', '/admin', '/cashier', '/gate', '/orders'];
+    for (const prefix of knownPrefixes) {
+      const idx = pathname.indexOf(prefix);
+      if (idx !== -1) {
+        return pathname.substring(idx);
+      }
+    }
+  }
+
+  return '/login';
+};
+
+/**
  * Enrutador principal de SHIKKUM con soporte para History API y estado sincronizado
  */
 const AppRouter: React.FC = () => {
   const { user, isLoading } = useAuth();
-  const [currentPath, setCurrentPath] = useState<string>(() => {
-    const p = window.location.pathname;
-    return p && p !== '/' ? p : '/login';
-  });
+  const [currentPath, setCurrentPath] = useState<string>(() => resolveRoutePath());
 
-  // Manejar el botón Atrás/Adelante del navegador
+  // Manejar el botón Atrás/Adelante y cambios de hash en el navegador
   useEffect(() => {
-    const handlePopState = () => {
-      const p = window.location.pathname;
-      setCurrentPath(p && p !== '/' ? p : '/login');
+    const handleLocationChange = () => {
+      setCurrentPath(resolveRoutePath());
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('hashchange', handleLocationChange);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
+    };
   }, []);
 
   const navigate = (path: string) => {
-    setCurrentPath(path);
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    setCurrentPath(cleanPath);
     try {
-      window.history.pushState({}, '', path);
+      // Usar hash para garantizar funcionamiento sin 404 en cualquier servidor estático o GitHub Pages
+      window.location.hash = cleanPath;
+      window.history.pushState({}, '', window.location.pathname + '#' + cleanPath);
     } catch {
       // Ignorar restricciones en entornos iframe restringidos
     }
