@@ -225,10 +225,10 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 >
                   <div className="flex items-center justify-between w-full mb-1">
                     <span className="text-xs font-bold capitalize">
-                      {acc.role === 'gate_operator' ? 'Gate Operator' : acc.role}
+                      {acc.displayName || (acc.role === 'gate_operator' ? 'Gate Operator' : acc.role)}
                     </span>
                     <span
-                      className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
                         acc.isActive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/20 text-red-400'
                       }`}
                     >
