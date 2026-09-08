@@ -22,6 +22,7 @@ import { orderService } from '../../services/order.service';
 import { paymentService } from '../../services/payment.service';
 import { useAuth } from '../../context/AuthContext';
 import { OrderTicketsList } from '../../components/tickets/OrderTicketsList';
+import { OrderAuditTimeline } from '../../components/orders/OrderAuditTimeline';
 
 interface OrderDetailViewProps {
   orderId: string;
@@ -635,6 +636,9 @@ export const OrderDetailView: React.FC<OrderDetailViewProps> = ({
       {order.status === 'PAID' && (
         <OrderTicketsList orderId={order.id} orderStatus={order.status} />
       )}
+
+      {/* Bitácora de Auditoría y Trazabilidad (Fase 8) */}
+      <OrderAuditTimeline orderId={order.id} />
 
       {/* Modal de Visualización Segura de Comprobante */}
       {selectedProofUrl && (

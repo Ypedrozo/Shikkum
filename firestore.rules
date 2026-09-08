@@ -240,6 +240,23 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ==========================================
+    // Colección: /audit_logs/{logId} (Fase 8)
+    // ==========================================
+    match /audit_logs/{logId} {
+      // Solo Administrador y Cobranzas pueden consultar la pista de auditoría
+      // El Operador de Puerta (gate_operator) tiene acceso DENEGADO
+      allow read: if isAdmin() || isCashier();
+
+      // Creación de eventos de auditoría inmutables por usuarios autorizados
+      allow create: if (isAdmin() || isCashier()) &&
+        request.resource.data.performedBy == request.auth.uid &&
+        request.resource.data.keys().hasAll(['action', 'entityType', 'entityId', 'performedBy', 'timestamp']);
+
+      // Actualización o eliminación PROHIBIDAS: bitácora estrictamente inmutable
+      allow update, delete: if false;
+    }
+
     // Regla de bloqueo estricto por defecto para cualquier otra colección no autorizada
     match /{document=**} {
       allow read, write: if false;

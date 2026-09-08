@@ -17,10 +17,11 @@ export type PaymentMethod = 'CASH' | 'BANK_TRANSFER' | 'CARD' | 'OTHER';
 export type PaymentStatus = 'PENDING' | 'CONFIRMED' | 'REJECTED';
 
 /**
- * Entidad independiente para registro y auditoría de pagos
+ * Entidad independiente para registro y auditoría de pagos (Fase 8 Extendido)
  */
 export interface Payment {
   id: string;
+  paymentId?: string; // Alias de compatibilidad
 
   orderId: string;
   orderCode: string;
@@ -29,9 +30,25 @@ export interface Payment {
   currency: 'USD';
 
   method: PaymentMethod;
+  paymentMethod?: PaymentMethod; // Alias de especificación Fase 8
   status: PaymentStatus;
 
   reference?: string;
+  referenceNumber?: string; // Alias Fase 8
+
+  // Metadatos de Comprobante de Pago en Firebase Storage (Fase 8)
+  receiptStoragePath?: string;
+  receiptFileName?: string;
+  receiptContentType?: string;
+  receiptSize?: number;
+  uploadedAt?: string;
+  uploadedBy?: string;
+  uploadedByName?: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  verifiedByName?: string;
+
+  // Retrocompatibilidad
   proofUrl?: string;
   proofStoragePath?: string;
 
@@ -49,13 +66,22 @@ export interface Payment {
   rejectedByName?: string;
   rejectedAt?: string;
   rejectionReason?: string;
+
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface RegisterPaymentRequest {
   orderId: string;
   amount: number;
   method: PaymentMethod;
+  paymentMethod?: PaymentMethod;
   reference?: string;
+  referenceNumber?: string;
+  receiptStoragePath?: string;
+  receiptFileName?: string;
+  receiptContentType?: string;
+  receiptSize?: number;
   proofStoragePath?: string;
   proofUrl?: string;
   notes?: string;
@@ -78,6 +104,35 @@ export interface PaymentFilterParams {
   eventId?: string;
   sortByDate?: 'asc' | 'desc';
 }
+
+/**
+ * Acciones y eventos de auditoría inmutables — SHIKKUM Fase 8
+ */
+export type AuditAction =
+  | 'PAYMENT_REGISTERED'
+  | 'RECEIPT_UPLOADED'
+  | 'PAYMENT_APPROVED'
+  | 'PAYMENT_REJECTED'
+  | 'RECEIPT_REPLACED'
+  | 'TICKET_GENERATED'
+  | 'TICKET_SENT'
+  | 'TICKET_RESENT'
+  | 'ORDER_CREATED'
+  | 'ORDER_CANCELLED';
+
+export interface AuditLog {
+  id: string;
+  timestamp: string;
+  userId: string;
+  userEmail?: string;
+  userName?: string;
+  role: SystemRole;
+  action: AuditAction;
+  entityType: 'order' | 'payment' | 'ticket' | 'customer' | 'event';
+  entityId: string;
+  metadata?: Record<string, any>;
+}
+
 
 /**
  * Operador del sistema con credenciales en Firebase Auth

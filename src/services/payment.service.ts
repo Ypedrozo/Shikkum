@@ -22,6 +22,7 @@ import { authService } from './auth.service';
 import { orderService } from './order.service';
 import { ticketService } from './ticket.service';
 import { emailDispatchService } from './emailDispatch.service';
+import { auditService } from './audit.service';
 
 const PAYMENTS_STORAGE_KEY = 'shikkum_payments_store_v1';
 
@@ -75,13 +76,19 @@ class PaymentService {
   }
 
   /**
-   * Subir comprobante de pago de forma segura a Firebase Storage
-   * Valida roles, tipos MIME permitidos y tamaño máximo (5MB)
+   * Subir comprobante de pago de forma segura a Firebase Storage (Fase 8)
+   * Valida roles, tipos MIME permitidos y tamaño máximo (10MB)
    */
   async uploadPaymentProof(
     orderId: string,
     file: File
-  ): Promise<{ storagePath: string; downloadUrl: string }> {
+  ): Promise<{
+    storagePath: string;
+    downloadUrl: string;
+    fileName: string;
+    contentType: string;
+    size: number;
+  }> {
     const currentUser = authService.getCurrentUser();
     if (!currentUser) {
       throw new Error('Debe iniciar sesión para subir un comprobante de pago.');
@@ -90,7 +97,7 @@ class PaymentService {
       throw new Error('El usuario no tiene autorización para registrar comprobantes.');
     }
 
-    // Validación estricta de tipo MIME
+    // Validación estricta de tipo MIME (image/jpeg, image/png, image/webp, application/pdf)
     const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
     if (!allowedMimeTypes.includes(file.type)) {
       throw new Error(
@@ -103,20 +110,24 @@ class PaymentService {
     const lowerName = file.name.toLowerCase();
     const hasValidExt = allowedExtensions.some((ext) => lowerName.endsWith(ext));
     if (!hasValidExt) {
-      throw new Error('La extensión del archivo no es válida. Solo se admiten extensiones .jpg, .jpeg, .png, .webp o .pdf.');
+      throw new Error(
+        'La extensión del archivo no es válida. Solo se admiten extensiones .jpg, .jpeg, .png, .webp o .pdf.'
+      );
     }
 
-    // Validación de tamaño máximo (5 MB)
-    const MAX_SIZE_BYTES = 5 * 1024 * 1024;
+    // Validación de tamaño máximo (10 MB según especificación Fase 8)
+    const MAX_SIZE_BYTES = 10 * 1024 * 1024;
     if (file.size > MAX_SIZE_BYTES) {
-      throw new Error('El archivo excede el tamaño máximo permitido de 5 MB.');
+      throw new Error('El archivo excede el tamaño máximo permitido de 10 MB.');
     }
 
     const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storagePath = `payment_proofs/${orderId}/${Date.now()}_${sanitizedFileName}`;
+    const storagePath = `payment_documents/${orderId}/${Date.now()}_${sanitizedFileName}`;
+
+    let downloadUrl = '';
 
     // Si Firebase Storage está configurado en vivo
-    if (storage) {
+    if (this.hasLiveFirebase() && storage) {
       try {
         const storageReference = ref(storage, storagePath);
         const metadata = {
@@ -129,33 +140,65 @@ class PaymentService {
         };
 
         const uploadResult = await uploadBytes(storageReference, file, metadata);
-        const downloadUrl = await getDownloadURL(uploadResult.ref);
-
-        return { storagePath, downloadUrl };
+        downloadUrl = await getDownloadURL(uploadResult.ref);
       } catch (storageError: any) {
-        console.warn('[SHIKKUM] Error al subir a Firebase Storage en vivo:', storageError);
-        // Si no estamos en producción forzada, procesar fallback seguro
-        if (isProductionEnvironment) {
-          throw new Error('Error al almacenar comprobante en el servicio de archivos de producción.');
-        }
+        console.error('[SHIKKUM] Error al subir a Firebase Storage en vivo:', storageError);
+        throw new Error(
+          'Error al almacenar el comprobante en Firebase Storage: ' +
+            (storageError.message || 'Verifique las credenciales y reglas de Storage.')
+        );
       }
+    } else {
+      // Sandbox local para pruebas sin Storage conectado
+      downloadUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Error al procesar el archivo seleccionado.'));
+        reader.readAsDataURL(file);
+      });
     }
 
-    // Fallback para desarrollo / testing sin credenciales de Storage activas:
-    // Creamos una URL de objeto o data URL segura para visualización inmediata en sesión
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        resolve({
+    // Registrar evento de auditoría obligatorio
+    try {
+      await auditService.logEvent({
+        action: 'RECEIPT_UPLOADED',
+        entityType: 'payment',
+        entityId: orderId,
+        metadata: {
+          orderId,
           storagePath,
-          downloadUrl: reader.result as string
-        });
-      };
-      reader.onerror = () => {
-        reject(new Error('Error al procesar el archivo seleccionado.'));
-      };
-      reader.readAsDataURL(file);
-    });
+          fileName: file.name,
+          contentType: file.type,
+          size: file.size
+        }
+      });
+    } catch (auditErr) {
+      console.warn('[PaymentService] Advertencia al registrar auditoría de comprobante:', auditErr);
+    }
+
+    return {
+      storagePath,
+      downloadUrl,
+      fileName: file.name,
+      contentType: file.type,
+      size: file.size
+    };
+  }
+
+  /**
+   * Alias explícito de especificación Fase 8
+   */
+  async uploadPaymentReceipt(
+    orderId: string,
+    file: File
+  ): Promise<{
+    storagePath: string;
+    downloadUrl: string;
+    fileName: string;
+    contentType: string;
+    size: number;
+  }> {
+    return this.uploadPaymentProof(orderId, file);
   }
 
   /**
@@ -263,28 +306,43 @@ class PaymentService {
 
     const newPayment: Payment = {
       id: paymentId,
+      paymentId,
       orderId: order.id,
       orderCode: order.orderCode,
       amount: order.total,
       currency: 'USD',
       method: request.method,
+      paymentMethod: request.method,
       status: isAutoConfirmed ? 'CONFIRMED' : 'PENDING',
       reference: request.reference ? request.reference.trim() : undefined,
-      proofStoragePath: request.proofStoragePath,
+      referenceNumber: request.reference ? request.reference.trim() : undefined,
+      receiptStoragePath: request.receiptStoragePath || request.proofStoragePath,
+      receiptFileName: request.receiptFileName,
+      receiptContentType: request.receiptContentType,
+      receiptSize: request.receiptSize,
+      proofStoragePath: request.proofStoragePath || request.receiptStoragePath,
       proofUrl: request.proofUrl,
       notes: request.notes ? request.notes.trim() : undefined,
       registeredBy: currentUser.uid,
       registeredByName: currentUser.displayName || 'Operador Cobranzas',
-      registeredAt: nowIso
+      registeredAt: nowIso,
+      uploadedAt: nowIso,
+      uploadedBy: currentUser.uid,
+      uploadedByName: currentUser.displayName || 'Operador Cobranzas',
+      createdAt: nowIso,
+      updatedAt: nowIso
     };
 
     if (isAutoConfirmed) {
       newPayment.confirmedBy = currentUser.uid;
       newPayment.confirmedByName = currentUser.displayName || 'Operador Cobranzas';
       newPayment.confirmedAt = nowIso;
+      newPayment.verifiedBy = currentUser.uid;
+      newPayment.verifiedByName = currentUser.displayName || 'Operador Cobranzas';
+      newPayment.verifiedAt = nowIso;
     }
 
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         await setDoc(doc(db, 'payments', paymentId), newPayment);
         if (isAutoConfirmed) {
@@ -294,31 +352,68 @@ class PaymentService {
           });
         }
       } catch (err: any) {
-        console.warn('Error al escribir pago en Firestore:', err);
+        console.error('[PaymentService] Error al escribir pago en Firestore:', err);
+        throw new Error('Error al registrar pago en Firestore: ' + (err.message || 'Error de conexión'));
+      }
+    } else {
+      // Guardar en almacenamiento local únicamente en modo sandbox
+      const localPayments = this.getLocalPayments();
+      localPayments.unshift(newPayment);
+      this.saveLocalPayments(localPayments);
+
+      // Si fue auto-confirmado, actualizar orden localmente también
+      if (isAutoConfirmed) {
+        const orders = orderService['getLocalOrders']();
+        const oIdx = orders.findIndex((o) => o.id === order.id);
+        if (oIdx !== -1) {
+          orders[oIdx] = {
+            ...orders[oIdx],
+            status: 'PAID',
+            updatedAt: nowIso
+          };
+          orderService['saveLocalOrders'](orders);
+        }
       }
     }
 
-    // Guardar en almacenamiento local
-    const localPayments = this.getLocalPayments();
-    localPayments.unshift(newPayment);
-    this.saveLocalPayments(localPayments);
+    // Registrar evento de auditoría obligatorio
+    try {
+      await auditService.logEvent({
+        action: 'PAYMENT_REGISTERED',
+        entityType: 'payment',
+        entityId: paymentId,
+        metadata: {
+          orderId: order.id,
+          orderCode: order.orderCode,
+          amount: order.total,
+          method: request.method,
+          status: newPayment.status,
+          receiptFileName: request.receiptFileName,
+          hasReceipt: Boolean(request.receiptStoragePath || request.proofStoragePath || request.proofUrl)
+        }
+      });
 
-    // Si fue auto-confirmado, actualizar orden localmente también
-    if (isAutoConfirmed) {
-      const orders = orderService['getLocalOrders']();
-      const oIdx = orders.findIndex((o) => o.id === order.id);
-      if (oIdx !== -1) {
-        orders[oIdx] = {
-          ...orders[oIdx],
-          status: 'PAID',
-          updatedAt: nowIso
-        };
-        orderService['saveLocalOrders'](orders);
+      if (isAutoConfirmed) {
+        await auditService.logEvent({
+          action: 'PAYMENT_APPROVED',
+          entityType: 'payment',
+          entityId: paymentId,
+          metadata: {
+            orderId: order.id,
+            orderCode: order.orderCode,
+            confirmedBy: currentUser.uid,
+            confirmedByName: currentUser.displayName
+          }
+        });
       }
+    } catch (auditErr) {
+      console.warn('[PaymentService] Advertencia al registrar auditoría de pago:', auditErr);
+    }
 
-      // Emisión y preparación de entradas por correo electrónico tras auto-confirmación
+    // Si fue auto-confirmado, emitir boletos y despachar correo server-side / local
+    if (isAutoConfirmed) {
       try {
-        await ticketService.issueLocalTicketsForPaidOrder(order.id, currentUser);
+        await ticketService.generateTicketsForOrder(order.id);
         await emailDispatchService.sendTicketsEmail(order.id);
       } catch (autoErr) {
         console.warn('[SHIKKUM] Error en emisión/despacho tras auto-confirmación:', autoErr);
@@ -442,8 +537,64 @@ class PaymentService {
 
     const nowIso = new Date().toISOString();
 
-    // Actualizar local
-    await this.syncLocalPaymentConfirmed(paymentId, currentUser, nowIso);
+    if (this.hasLiveFirebase() && db) {
+      try {
+        const paymentRef = doc(db, 'payments', paymentId);
+        const orderRef = doc(db, 'orders', payment.orderId);
+        await updateDoc(paymentRef, {
+          status: 'CONFIRMED',
+          confirmedBy: currentUser.uid,
+          confirmedByName: currentUser.displayName || 'Operador Cobranzas',
+          confirmedAt: nowIso,
+          verifiedBy: currentUser.uid,
+          verifiedByName: currentUser.displayName || 'Operador Cobranzas',
+          verifiedAt: nowIso,
+          updatedAt: nowIso
+        });
+        await updateDoc(orderRef, {
+          status: 'PAID',
+          updatedAt: nowIso
+        });
+      } catch (err: any) {
+        console.error('[PaymentService] Error confirmando pago en Firestore:', err);
+        throw new Error('Error al confirmar pago en Firestore: ' + (err.message || ''));
+      }
+    } else {
+      // Actualizar local únicamente en sandbox
+      await this.syncLocalPaymentConfirmed(paymentId, currentUser, nowIso);
+    }
+
+    // Registrar evento de auditoría
+    try {
+      await auditService.logEvent({
+        action: 'PAYMENT_APPROVED',
+        entityType: 'payment',
+        entityId: payment.id,
+        metadata: {
+          orderId: order.id,
+          orderCode: order.orderCode,
+          amount: payment.amount,
+          confirmedBy: currentUser.uid,
+          confirmedByName: currentUser.displayName
+        }
+      });
+    } catch (auditErr) {
+      console.warn('[PaymentService] Advertencia al registrar auditoría de aprobación:', auditErr);
+    }
+
+    // Emisión de boletos y despacho de correo
+    try {
+      await ticketService.generateTicketsForOrder(payment.orderId);
+      await auditService.logEvent({
+        action: 'TICKET_GENERATED',
+        entityType: 'order',
+        entityId: payment.orderId,
+        metadata: { orderCode: order.orderCode }
+      });
+      await emailDispatchService.sendTicketsEmail(payment.orderId);
+    } catch (emitErr) {
+      console.warn('[PaymentService] Nota de emisión/despacho tras confirmación:', emitErr);
+    }
 
     return {
       success: true,
@@ -470,11 +621,15 @@ class PaymentService {
         status: 'CONFIRMED',
         confirmedBy: operator.uid,
         confirmedByName: operator.displayName || 'Operador',
-        confirmedAt: nowIso
+        confirmedAt: nowIso,
+        verifiedBy: operator.uid,
+        verifiedByName: operator.displayName || 'Operador',
+        verifiedAt: nowIso,
+        updatedAt: nowIso
       };
       this.saveLocalPayments(payments);
 
-      // Actualizar orden
+      // Actualizar orden local
       const orders = orderService['getLocalOrders']();
       const oIdx = orders.findIndex((o) => o.id === payment.orderId);
       if (oIdx !== -1) {
@@ -484,20 +639,6 @@ class PaymentService {
           updatedAt: nowIso
         };
         orderService['saveLocalOrders'](orders);
-      }
-
-      // Emisión server-side / sandbox local de boletos (Fase 6)
-      try {
-        await ticketService.issueLocalTicketsForPaidOrder(payment.orderId, operator);
-      } catch (tktErr) {
-        console.warn('[SHIKKUM] Nota de emisión local de tickets:', tktErr);
-      }
-
-      // Preparación y despacho de entradas por correo electrónico (Fase 7)
-      try {
-        await emailDispatchService.sendTicketsEmail(payment.orderId);
-      } catch (emailErr) {
-        console.warn('[SHIKKUM] Nota de despacho de correo tras confirmación de pago:', emailErr);
       }
     }
   }
@@ -580,7 +721,41 @@ class PaymentService {
     }
 
     const nowIso = new Date().toISOString();
-    this.syncLocalPaymentRejected(paymentId, currentUser, reason, nowIso);
+
+    if (this.hasLiveFirebase() && db) {
+      try {
+        const paymentRef = doc(db, 'payments', paymentId);
+        await updateDoc(paymentRef, {
+          status: 'REJECTED',
+          rejectionReason: reason,
+          rejectedBy: currentUser.uid,
+          rejectedByName: currentUser.displayName || 'Operador',
+          rejectedAt: nowIso,
+          updatedAt: nowIso
+        });
+      } catch (err: any) {
+        console.error('[PaymentService] Error al rechazar en Firestore:', err);
+        throw new Error('Error al registrar rechazo de pago en Firestore: ' + (err.message || ''));
+      }
+    } else {
+      this.syncLocalPaymentRejected(paymentId, currentUser, reason, nowIso);
+    }
+
+    try {
+      await auditService.logEvent({
+        action: 'PAYMENT_REJECTED',
+        entityType: 'payment',
+        entityId: payment.id,
+        metadata: {
+          orderId: payment.orderId,
+          rejectionReason: reason,
+          rejectedBy: currentUser.uid,
+          rejectedByName: currentUser.displayName
+        }
+      });
+    } catch (auditErr) {
+      console.warn('[PaymentService] Advertencia al registrar auditoría de rechazo:', auditErr);
+    }
 
     return {
       success: true,
@@ -606,7 +781,8 @@ class PaymentService {
         rejectedBy: operator.uid,
         rejectedByName: operator.displayName || 'Operador',
         rejectedAt: nowIso,
-        rejectionReason: reason
+        rejectionReason: reason,
+        updatedAt: nowIso
       };
       this.saveLocalPayments(payments);
     }
@@ -618,18 +794,17 @@ class PaymentService {
   async getPayments(filters?: PaymentFilterParams): Promise<Payment[]> {
     let payments: Payment[] = [];
 
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const snap = await getDocs(collection(db, 'payments'));
         snap.forEach((d) => {
-          payments.push({ id: d.id, ...(d.data() as Omit<Payment, 'id'>) });
+          payments.push({ id: d.id, paymentId: d.id, ...(d.data() as Omit<Payment, 'id'>) });
         });
-      } catch (err) {
-        console.warn('Error al consultar /payments en Firestore:', err);
+      } catch (err: any) {
+        console.error('[PaymentService] Error al consultar /payments en Firestore:', err);
+        throw new Error('Error al consultar pagos en Firestore: ' + (err.message || ''));
       }
-    }
-
-    if (payments.length === 0) {
+    } else {
       payments = this.getLocalPayments();
     }
 
@@ -657,19 +832,18 @@ class PaymentService {
    * Obtener todos los pagos vinculados a una orden
    */
   async getPaymentsByOrderId(orderId: string): Promise<Payment[]> {
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const q = query(collection(db, 'payments'), where('orderId', '==', orderId));
         const snap = await getDocs(q);
-        if (!snap.empty) {
-          const list: Payment[] = [];
-          snap.forEach((d) => {
-            list.push({ id: d.id, ...(d.data() as Omit<Payment, 'id'>) });
-          });
-          return list;
-        }
-      } catch (err) {
-        console.warn('Error al consultar pagos por orderId en Firestore:', err);
+        const list: Payment[] = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, paymentId: d.id, ...(d.data() as Omit<Payment, 'id'>) });
+        });
+        return list;
+      } catch (err: any) {
+        console.error('[PaymentService] Error al consultar pagos por orderId en Firestore:', err);
+        throw new Error('Error al consultar pagos de la orden en Firestore: ' + (err.message || ''));
       }
     }
 
@@ -698,19 +872,21 @@ class PaymentService {
    * Obtener pago por ID
    */
   async getPaymentById(paymentId: string): Promise<Payment | null> {
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const snap = await getDoc(doc(db, 'payments', paymentId));
         if (snap.exists()) {
-          return { id: snap.id, ...(snap.data() as Omit<Payment, 'id'>) };
+          return { id: snap.id, paymentId: snap.id, ...(snap.data() as Omit<Payment, 'id'>) };
         }
-      } catch (err) {
-        console.warn('Error al obtener pago en Firestore:', err);
+        return null;
+      } catch (err: any) {
+        console.error('[PaymentService] Error al obtener pago en Firestore:', err);
+        throw new Error('Error al obtener pago en Firestore: ' + (err.message || ''));
       }
     }
 
     const localPayments = this.getLocalPayments();
-    return localPayments.find((p) => p.id === paymentId) || null;
+    return localPayments.find((p) => p.id === paymentId || p.paymentId === paymentId) || null;
   }
 }
 

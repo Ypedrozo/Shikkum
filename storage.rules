@@ -24,13 +24,13 @@ service firebase.storage {
     }
 
     function isValidProofSize() {
-      return request.resource.size <= 5 * 1024 * 1024; // Máximo 5MB
+      return request.resource.size <= 10 * 1024 * 1024; // Máximo 10MB (Fase 8)
     }
 
     // Comprobantes de pago de órdenes: /payment_proofs/{orderId}/{fileName}
     match /payment_proofs/{orderId}/{fileName} {
       // Lectura privada: Solo Administrador y Cobranzas pueden consultar comprobantes
-      // Acceso público DENEGADO estrictamente
+      // El Operador de Puerta (gate_operator) tiene acceso DENEGADO estrictamente
       allow read: if isAdminOrCashier();
 
       // Subida de comprobantes: Solo Admin o Cobranzas, con validación de tipo y tamaño
@@ -39,6 +39,15 @@ service firebase.storage {
         isValidProofSize();
 
       // Modificación o eliminación PROHIBIDAS: los comprobantes son documentos de auditoría inmutables
+      allow update, delete: if false;
+    }
+
+    // Comprobantes y documentos de pago (Fase 8): /payment_documents/{orderId}/{fileName}
+    match /payment_documents/{orderId}/{fileName} {
+      allow read: if isAdminOrCashier();
+      allow create: if isAdminOrCashier() &&
+        isValidProofContentType() &&
+        isValidProofSize();
       allow update, delete: if false;
     }
 

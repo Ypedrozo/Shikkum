@@ -5,12 +5,13 @@ import {
   where
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { db, functions, isProductionEnvironment } from './firebase';
+import { db, functions, isFirebaseConfigured, isProductionEnvironment } from './firebase';
 import { EmailDispatch, SendTicketsEmailResponse } from '../types';
 import { authService } from './auth.service';
 import { orderService } from './order.service';
 import { customerService } from './customer.service';
 import { ticketService } from './ticket.service';
+import { auditService } from './audit.service';
 
 const EMAIL_DISPATCHES_STORAGE_KEY = 'shikkum_email_dispatches_store_v1';
 
@@ -48,26 +49,23 @@ class EmailDispatchService {
    * Obtener todos los despachos de correo registrados para una orden
    */
   async getDispatchesByOrderId(orderId: string): Promise<EmailDispatch[]> {
-    if (db) {
+    if (isFirebaseConfigured && db) {
       try {
         const q = query(
           collection(db, 'email_dispatches'),
           where('orderId', '==', orderId)
         );
         const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-          const list = snapshot.docs.map((d) => d.data() as EmailDispatch);
-          list.sort(
-            (a, b) =>
-              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          );
-          return list;
-        }
-      } catch (err) {
-        console.warn(
-          '[EmailDispatchService] Error consultando email_dispatches en Firestore, usando almacenamiento local:',
-          err
+        const list: EmailDispatch[] = [];
+        snapshot.forEach((d) => list.push(d.data() as EmailDispatch));
+        list.sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
+        return list;
+      } catch (err: any) {
+        console.error('[EmailDispatchService] Error consultando email_dispatches en Firestore:', err);
+        throw new Error('Error al consultar despachos de correo en Firestore: ' + (err.message || ''));
       }
     }
 
@@ -317,6 +315,23 @@ class EmailDispatchService {
       }
     }
     ticketService.saveLocalTickets(allLocalTickets);
+
+    try {
+      await auditService.logEvent({
+        action: isResend ? 'TICKET_RESENT' : 'TICKET_SENT',
+        entityType: 'order',
+        entityId: orderId,
+        metadata: {
+          dispatchId,
+          orderCode: order.orderCode,
+          recipient: recipientEmail,
+          ticketCount: tickets.length,
+          isResend
+        }
+      });
+    } catch (e) {
+      console.warn('[EmailDispatchService] Error al registrar evento de auditoría:', e);
+    }
 
     return {
       success: true,

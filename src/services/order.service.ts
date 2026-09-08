@@ -20,6 +20,7 @@ import { authService } from './auth.service';
 import { customerService } from './customer.service';
 import { eventService } from './event.service';
 import { pricingService } from './pricing.service';
+import { auditService } from './audit.service';
 
 const ORDERS_STORAGE_KEY = 'shikkum_orders_store_v1';
 const ATTENDEES_STORAGE_KEY = 'shikkum_order_attendees_store_v1';
@@ -220,7 +221,23 @@ class OrderService {
       }
 
       // 2. Ejecución atómica directa contra Firestore verificando reglas del servidor
-      return this.executeAtomicFirestoreOrder(request, currentUser.uid);
+      const result = await this.executeAtomicFirestoreOrder(request, currentUser.uid);
+      try {
+        await auditService.logEvent({
+          action: 'ORDER_CREATED',
+          entityType: 'order',
+          entityId: result.orderId,
+          metadata: {
+            orderCode: result.orderCode,
+            total: result.total,
+            attendeeCount: request.attendees.length,
+            createdBy: currentUser.uid
+          }
+        });
+      } catch (auditErr) {
+        console.warn('[OrderService] Advertencia de auditoría:', auditErr);
+      }
+      return result;
     }
 
     // En producción nunca permitimos simulación local si no hay Firebase configurado
@@ -231,7 +248,23 @@ class OrderService {
     }
 
     // Modo Desarrollo / Sandbox Local
-    return this.executeLocalSandboxOrder(request, currentUser.uid);
+    const localResult = await this.executeLocalSandboxOrder(request, currentUser.uid);
+    try {
+      await auditService.logEvent({
+        action: 'ORDER_CREATED',
+        entityType: 'order',
+        entityId: localResult.orderId,
+        metadata: {
+          orderCode: localResult.orderCode,
+          total: localResult.total,
+          attendeeCount: request.attendees.length,
+          createdBy: currentUser.uid
+        }
+      });
+    } catch (auditErr) {
+      console.warn('[OrderService] Advertencia de auditoría:', auditErr);
+    }
+    return localResult;
   }
 
   /**
@@ -519,15 +552,15 @@ class OrderService {
   async getOrders(params?: OrderFilterParams): Promise<Order[]> {
     let ordersList: Order[] = [];
 
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const snap = await getDocs(collection(db, 'orders'));
         snap.forEach((d) => {
           ordersList.push({ id: d.id, ...(d.data() as Omit<Order, 'id'>) });
         });
-      } catch (err) {
-        console.warn('Error al obtener órdenes desde Firestore, usando cache local:', err);
-        ordersList = this.getLocalOrders();
+      } catch (err: any) {
+        console.error('[OrderService] Error al obtener órdenes desde Firestore:', err);
+        throw new Error('Error al consultar órdenes en Firestore: ' + (err.message || ''));
       }
     } else {
       ordersList = this.getLocalOrders();
@@ -573,14 +606,16 @@ class OrderService {
    * Obtener orden por identificador
    */
   async getOrderById(orderId: string): Promise<Order | null> {
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const snap = await getDoc(doc(db, 'orders', orderId));
         if (snap.exists()) {
           return { id: snap.id, ...(snap.data() as Omit<Order, 'id'>) };
         }
-      } catch (e) {
-        console.warn('Error al obtener orden de Firestore:', e);
+        return null;
+      } catch (e: any) {
+        console.error('[OrderService] Error al obtener orden de Firestore:', e);
+        throw new Error('Error al consultar orden en Firestore: ' + (e.message || ''));
       }
     }
 
@@ -592,18 +627,17 @@ class OrderService {
    * Obtener los asistentes registrados en una orden (con sus snapshots históricos de precio)
    */
   async getOrderAttendees(orderId: string): Promise<OrderAttendee[]> {
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const snap = await getDocs(collection(db, 'orders', orderId, 'attendees'));
-        if (!snap.empty) {
-          const list: OrderAttendee[] = [];
-          snap.forEach((d) => {
-            list.push({ id: d.id, ...(d.data() as Omit<OrderAttendee, 'id'>) });
-          });
-          return list;
-        }
-      } catch (e) {
-        console.warn('Error al obtener asistentes de subcolección en Firestore:', e);
+        const list: OrderAttendee[] = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, ...(d.data() as Omit<OrderAttendee, 'id'>) });
+        });
+        return list;
+      } catch (e: any) {
+        console.error('[OrderService] Error al obtener asistentes de subcolección en Firestore:', e);
+        throw new Error('Error al consultar asistentes en Firestore: ' + (e.message || ''));
       }
     }
 
@@ -647,19 +681,41 @@ class OrderService {
       cancellationReason: reason?.trim() || 'Cancelación administrativa'
     };
 
-    if (this.hasLiveFirebase()) {
-      await updateDoc(doc(db, 'orders', orderId), updatePayload);
+    if (this.hasLiveFirebase() && db) {
+      try {
+        await updateDoc(doc(db, 'orders', orderId), updatePayload);
+      } catch (err: any) {
+        console.error('[OrderService] Error al cancelar orden en Firestore:', err);
+        throw new Error('Error al cancelar orden en Firestore: ' + (err.message || ''));
+      }
+    } else {
+      // Actualizar almacenamiento local únicamente en sandbox
+      const orders = this.getLocalOrders();
+      const idx = orders.findIndex((o) => o.id === orderId);
+      if (idx !== -1) {
+        orders[idx] = {
+          ...orders[idx],
+          ...updatePayload
+        };
+        this.saveLocalOrders(orders);
+      }
     }
 
-    // Actualizar almacenamiento local
-    const orders = this.getLocalOrders();
-    const idx = orders.findIndex((o) => o.id === orderId);
-    if (idx !== -1) {
-      orders[idx] = {
-        ...orders[idx],
-        ...updatePayload
-      };
-      this.saveLocalOrders(orders);
+    // Registro de auditoría
+    try {
+      await auditService.logEvent({
+        action: 'ORDER_CANCELLED',
+        entityType: 'order',
+        entityId: orderId,
+        metadata: {
+          orderCode: existingOrder.orderCode,
+          reason: updatePayload.cancellationReason,
+          cancelledBy: currentUser.uid,
+          cancelledByName: currentUser.displayName
+        }
+      });
+    } catch (auditErr) {
+      console.warn('[OrderService] Advertencia al registrar auditoría de cancelación:', auditErr);
     }
   }
 }

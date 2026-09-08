@@ -66,27 +66,11 @@ if (isFirebaseConfigured) {
   );
 }
 
-// Proxies de seguridad para evitar caídas fatales si se invocan métodos cuando Firebase no está conectado
-const safeAuthProxy = new Proxy({} as Auth, {
-  get(_target, prop) {
-    if (authInstance) {
-      return (authInstance as any)[prop];
-    }
-    return undefined;
-  }
-});
+// Exportar instancias auténticas de Firebase SDK.
+// NUNCA exportar proxies vacíos que rompan validaciones internas del SDK modular en collection() o doc()
+export const app = appInstance as FirebaseApp;
+export const auth = authInstance as Auth;
+export const db = dbInstance as Firestore;
+export const functions = functionsInstance as Functions;
+export const storage = storageInstance as FirebaseStorage;
 
-const safeDbProxy = new Proxy({} as Firestore, {
-  get(_target, prop) {
-    if (dbInstance) {
-      return (dbInstance as any)[prop];
-    }
-    return undefined;
-  }
-});
-
-export const app: FirebaseApp = appInstance || ({} as FirebaseApp);
-export const auth: Auth = authInstance || safeAuthProxy;
-export const db: Firestore = dbInstance || safeDbProxy;
-export const functions: Functions | null = functionsInstance;
-export const storage: FirebaseStorage | null = storageInstance;

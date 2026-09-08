@@ -90,9 +90,9 @@ export const PaymentRegistrationPage: React.FC<PaymentRegistrationPageProps> = (
       return;
     }
 
-    // Tamaño máximo 5MB
-    if (file.size > 5 * 1024 * 1024) {
-      setFileError('El comprobante supera el tamaño máximo permitido de 5 MB.');
+    // Tamaño máximo 10MB (Fase 8)
+    if (file.size > 10 * 1024 * 1024) {
+      setFileError('El comprobante supera el tamaño máximo permitido de 10 MB.');
       return;
     }
 
@@ -145,12 +145,18 @@ export const PaymentRegistrationPage: React.FC<PaymentRegistrationPageProps> = (
 
       let proofStoragePath: string | undefined;
       let proofUrl: string | undefined;
+      let receiptFileName: string | undefined;
+      let receiptContentType: string | undefined;
+      let receiptSize: number | undefined;
 
       // Subir archivo de comprobante si aplica
       if (proofFile) {
         const uploadRes = await paymentService.uploadPaymentProof(order.id, proofFile);
         proofStoragePath = uploadRes.storagePath;
         proofUrl = uploadRes.downloadUrl;
+        receiptFileName = uploadRes.fileName;
+        receiptContentType = uploadRes.contentType;
+        receiptSize = uploadRes.size;
       }
 
       // Registrar pago
@@ -162,6 +168,10 @@ export const PaymentRegistrationPage: React.FC<PaymentRegistrationPageProps> = (
         notes: notes.trim() || undefined,
         proofStoragePath,
         proofUrl,
+        receiptStoragePath: proofStoragePath,
+        receiptFileName,
+        receiptContentType,
+        receiptSize,
         autoConfirm
       });
 
@@ -553,7 +563,7 @@ export const PaymentRegistrationPage: React.FC<PaymentRegistrationPageProps> = (
                 Arrastre y suelte el comprobante aquí, o haga clic para examinar
               </p>
               <p className="text-[10px] text-slate-500 mt-1">
-                Formatos permitidos: JPEG, PNG, WEBP, PDF (Máximo 5 MB)
+                Formatos permitidos: JPEG, PNG, WEBP, PDF (Máximo 10 MB)
               </p>
               <input
                 ref={fileInputRef}

@@ -9,7 +9,7 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import QRCode from 'qrcode';
-import { db, functions, isProductionEnvironment } from './firebase';
+import { db, functions, isFirebaseConfigured, isProductionEnvironment } from './firebase';
 import {
   Ticket,
   AccessLog,
@@ -151,17 +151,17 @@ class TicketService {
    * Obtener tickets emitidos para una orden
    */
   async getTicketsByOrderId(orderId: string): Promise<Ticket[]> {
-    if (db) {
+    if (isFirebaseConfigured && db) {
       try {
         const q = query(collection(db, 'tickets'), where('orderId', '==', orderId));
         const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-          const tickets = snapshot.docs.map((d) => d.data() as Ticket);
-          tickets.sort((a, b) => a.ticketCode.localeCompare(b.ticketCode));
-          return tickets;
-        }
-      } catch (err) {
-        console.warn('[TicketService] Error consultando tickets en Firestore, usando almacenamiento local:', err);
+        const tickets: Ticket[] = [];
+        snapshot.forEach((d) => tickets.push(d.data() as Ticket));
+        tickets.sort((a, b) => a.ticketCode.localeCompare(b.ticketCode));
+        return tickets;
+      } catch (err: any) {
+        console.error('[TicketService] Error consultando tickets en Firestore:', err);
+        throw new Error('Error al consultar boletos de la orden en Firestore: ' + (err.message || ''));
       }
     }
 
@@ -175,14 +175,16 @@ class TicketService {
    * Obtener ticket por su ID único
    */
   async getTicketById(ticketId: string): Promise<Ticket | null> {
-    if (db) {
+    if (isFirebaseConfigured && db) {
       try {
         const snap = await getDoc(doc(db, 'tickets', ticketId));
         if (snap.exists()) {
           return snap.data() as Ticket;
         }
-      } catch (err) {
-        console.warn('[TicketService] Error obteniendo ticket en Firestore:', err);
+        return null;
+      } catch (err: any) {
+        console.error('[TicketService] Error obteniendo ticket en Firestore:', err);
+        throw new Error('Error al consultar boleto en Firestore: ' + (err.message || ''));
       }
     }
 
@@ -192,25 +194,30 @@ class TicketService {
 
   /**
    * Obtener todos los tickets emitidos en el sistema (con soporte de filtros)
+   * Restringido: gate_operator NO puede listar masivamente los boletos
    */
   async getAllTickets(filter?: { eventId?: string; status?: string }): Promise<Ticket[]> {
-    if (db) {
+    const currentUser = authService.getCurrentUser();
+    if (currentUser && currentUser.role === 'gate_operator') {
+      throw new Error('Los operadores de puerta no tienen autorización para consultar la lista global de boletos.');
+    }
+
+    if (isFirebaseConfigured && db) {
       try {
-        let q = collection(db, 'tickets');
-        const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-          let list = snapshot.docs.map((d) => d.data() as Ticket);
-          if (filter?.eventId) {
-            list = list.filter((t) => t.eventId === filter.eventId);
-          }
-          if (filter?.status && filter.status !== 'ALL') {
-            list = list.filter((t) => t.status === filter.status);
-          }
-          list.sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime());
-          return list;
+        const snapshot = await getDocs(collection(db, 'tickets'));
+        let list: Ticket[] = [];
+        snapshot.forEach((d) => list.push(d.data() as Ticket));
+        if (filter?.eventId) {
+          list = list.filter((t) => t.eventId === filter.eventId);
         }
-      } catch (err) {
-        console.warn('[TicketService] Error consultando todos los tickets en Firestore:', err);
+        if (filter?.status && filter.status !== 'ALL') {
+          list = list.filter((t) => t.status === filter.status);
+        }
+        list.sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime());
+        return list;
+      } catch (err: any) {
+        console.error('[TicketService] Error consultando todos los tickets en Firestore:', err);
+        throw new Error('Error al consultar boletos en Firestore: ' + (err.message || ''));
       }
     }
 
