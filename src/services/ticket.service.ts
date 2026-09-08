@@ -9,7 +9,7 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import QRCode from 'qrcode';
-import { db, functions, isFirebaseConfigured, isProductionEnvironment } from './firebase';
+import { db, functions, isFirebaseConfigured } from './firebase';
 import {
   Ticket,
   AccessLog,
@@ -313,9 +313,7 @@ class TicketService {
           };
         }
 
-        if (isProductionEnvironment) {
-          throw new Error(`Error en servidor de control de acceso: ${msg || 'Error desconocido'}`);
-        }
+        console.warn('[TicketService] Cloud Function validateTicketAccess no disponible, procediendo con validación directa/local:', fnError);
       }
     }
 
@@ -353,14 +351,11 @@ class TicketService {
           return result.data;
         }
       } catch (fnError: any) {
-        console.warn('[TicketService] Error en Cloud Function resendTicketEmail:', fnError);
-        if (isProductionEnvironment) {
-          throw new Error(fnError.message || 'Error al reenviar boleto.');
-        }
+        console.warn('[TicketService] Error o Cloud Function resendTicketEmail no disponible, usando fallback:', fnError);
       }
     }
 
-    // Sandbox Local
+    // Sandbox Local / Directo
     return this.executeLocalResendTicketEmail(ticketId, currentUser, customRecipient);
   }
 

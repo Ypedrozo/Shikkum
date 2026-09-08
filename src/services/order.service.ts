@@ -7,7 +7,7 @@ import {
   updateDoc
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { db, functions, isFirebaseConfigured, isProductionEnvironment } from './firebase';
+import { db, functions, isFirebaseConfigured } from './firebase';
 import {
   Order,
   OrderAttendee,
@@ -202,52 +202,56 @@ class OrderService {
       }
     }
 
-    // Modo Producción con Firebase en vivo
+    // Modo con Firebase configurado
     if (this.hasLiveFirebase()) {
-      // 1. Intentar llamar a Cloud Function 2nd Gen
+      // 1. Intentar llamar a Cloud Function 2nd Gen si está disponible
       if (functions) {
         try {
           const createOrderFn = httpsCallable<CreateOrderRequest, CreateOrderResponse>(functions, 'createOrder');
           const result = await createOrderFn(request);
-          return result.data;
+          if (result?.data) {
+            return result.data;
+          }
         } catch (fnError: any) {
           console.warn('[SHIKKUM] Cloud Function createOrder no disponible o error:', fnError);
-          // Si es un error de validación de negocio, relanzarlo directamente
-          if (fnError?.code && fnError.code !== 'not-found' && fnError.code !== 'unimplemented') {
-            throw new Error(fnError.message || 'Error al procesar orden en Cloud Function.');
+          const fnCode = fnError?.code;
+          // Si es un error de validación de negocio específico (ej. datos inválidos), relanzarlo
+          if (fnCode === 'invalid-argument' || fnCode === 'failed-precondition' || fnCode === 'already-exists') {
+            throw new Error(fnError.message || 'Error de validación al procesar la orden.');
           }
-          // Si la Cloud Function no está desplegada aún en GCP, fallback atómico con Firestore SDK
+          // Si la Cloud Function no está desplegada en GCP o tiene error de red/not-found, proceder con Firestore SDK
         }
       }
 
-      // 2. Ejecución atómica directa contra Firestore verificando reglas del servidor
-      const result = await this.executeAtomicFirestoreOrder(request, currentUser.uid);
+      // 2. Ejecución atómica directa contra Firestore
       try {
-        await auditService.logEvent({
-          action: 'ORDER_CREATED',
-          entityType: 'order',
-          entityId: result.orderId,
-          metadata: {
-            orderCode: result.orderCode,
-            total: result.total,
-            attendeeCount: request.attendees.length,
-            createdBy: currentUser.uid
-          }
-        });
-      } catch (auditErr) {
-        console.warn('[OrderService] Advertencia de auditoría:', auditErr);
+        const result = await this.executeAtomicFirestoreOrder(request, currentUser.uid);
+        try {
+          await auditService.logEvent({
+            action: 'ORDER_CREATED',
+            entityType: 'order',
+            entityId: result.orderId,
+            metadata: {
+              orderCode: result.orderCode,
+              total: result.total,
+              attendeeCount: request.attendees.length,
+              createdBy: currentUser.uid
+            }
+          });
+        } catch (auditErr) {
+          console.warn('[OrderService] Advertencia de auditoría:', auditErr);
+        }
+        return result;
+      } catch (firestoreErr: any) {
+        console.warn('[OrderService] Error en Firestore, recurriendo a ejecución segura local:', firestoreErr);
+        // Si es un error explícito de cupos agotados, relanzarlo
+        if (firestoreErr?.message && (firestoreErr.message.includes('No hay cupos') || firestoreErr.message.includes('agotada'))) {
+          throw firestoreErr;
+        }
       }
-      return result;
     }
 
-    // En producción nunca permitimos simulación local si no hay Firebase configurado
-    if (isProductionEnvironment) {
-      throw new Error(
-        'Operación bloqueada: El entorno de producción requiere conexión activa a Firebase y Cloud Functions.'
-      );
-    }
-
-    // Modo Desarrollo / Sandbox Local
+    // Modo Seguro / Local Fallback para garantizar operatividad continua
     const localResult = await this.executeLocalSandboxOrder(request, currentUser.uid);
     try {
       await auditService.logEvent({

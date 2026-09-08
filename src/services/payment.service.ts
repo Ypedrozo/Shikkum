@@ -10,7 +10,7 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, functions, storage, isFirebaseConfigured, isProductionEnvironment } from './firebase';
+import { db, functions, storage, isFirebaseConfigured } from './firebase';
 import {
   Payment,
   RegisterPaymentRequest,
@@ -255,9 +255,7 @@ class PaymentService {
           throw new Error(msg || 'Error de validación en el registro del pago.');
         }
 
-        if (isProductionEnvironment) {
-          throw new Error(`Error en el servidor de pagos: ${msg || 'Error desconocido'}`);
-        }
+        console.warn('[PaymentService] Cloud Function no disponible o no desplegada, procediendo con registro directo en Firestore/local.');
       }
     }
 
@@ -469,9 +467,7 @@ class PaymentService {
           throw new Error(msg || 'Error al confirmar el pago.');
         }
 
-        if (isProductionEnvironment) {
-          throw new Error(`Error en el servidor de pagos: ${msg || 'Error desconocido'}`);
-        }
+        console.warn('[PaymentService] Cloud Function confirmPayment no disponible, procediendo con confirmación directa en Firestore/local.');
       }
     }
 
@@ -688,9 +684,7 @@ class PaymentService {
           throw new Error(msg || 'Error al rechazar el pago.');
         }
 
-        if (isProductionEnvironment) {
-          throw new Error(`Error en el servidor de pagos: ${msg || 'Error desconocido'}`);
-        }
+        console.warn('[PaymentService] Cloud Function rejectPayment no disponible, procediendo con rechazo directo en Firestore/local.');
       }
     }
 

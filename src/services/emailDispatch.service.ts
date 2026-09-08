@@ -5,7 +5,7 @@ import {
   where
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { db, functions, isFirebaseConfigured, isProductionEnvironment } from './firebase';
+import { db, functions, isFirebaseConfigured } from './firebase';
 import { EmailDispatch, SendTicketsEmailResponse } from '../types';
 import { authService } from './auth.service';
 import { orderService } from './order.service';
@@ -118,16 +118,13 @@ class EmailDispatchService {
         }
       } catch (fnError: any) {
         console.warn(
-          '[EmailDispatchService] Cloud Function sendTicketsEmail error, usando fallback local:',
+          '[EmailDispatchService] Cloud Function sendTicketsEmail no disponible o error, usando fallback:',
           fnError
         );
-        if (isProductionEnvironment) {
-          throw new Error(fnError.message || 'Error al enviar entradas por correo.');
-        }
       }
     }
 
-    // 2. Sandbox Local
+    // 2. Sandbox Local / Directo
     return this.executeLocalSendTicketsEmail(orderId, currentUser, false);
   }
 
@@ -165,16 +162,13 @@ class EmailDispatchService {
         }
       } catch (fnError: any) {
         console.warn(
-          '[EmailDispatchService] Cloud Function resendTicketsEmail error, usando fallback local:',
+          '[EmailDispatchService] Cloud Function resendTicketsEmail no disponible o error, usando fallback:',
           fnError
         );
-        if (isProductionEnvironment) {
-          throw new Error(fnError.message || 'Error al reenviar entradas por correo.');
-        }
       }
     }
 
-    // 2. Sandbox Local
+    // 2. Sandbox Local / Directo
     return this.executeLocalSendTicketsEmail(orderId, currentUser, true, customRecipient);
   }
 

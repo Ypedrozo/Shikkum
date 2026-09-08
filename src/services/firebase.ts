@@ -12,12 +12,13 @@ import { getStorage, FirebaseStorage } from 'firebase/storage';
 const env = (import.meta as any).env || {};
 
 export const firebaseConfig = {
-  apiKey: env.VITE_FIREBASE_API_KEY || '',
+  apiKey: env.VITE_FIREBASE_API_KEY || 'AIzaSyBdxqxBRD9wmCbsOOG-eBIFhl_cVew5lEs',
   authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || 'shikkum-7a238.firebaseapp.com',
   projectId: env.VITE_FIREBASE_PROJECT_ID || 'shikkum-7a238',
   storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || 'shikkum-7a238.firebasestorage.app',
   messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '128758477432',
-  appId: env.VITE_FIREBASE_APP_ID || '1:128758477432:web:4b6c7282909cc5a939b38d'
+  appId: env.VITE_FIREBASE_APP_ID || '1:128758477432:web:4b6c7282909cc5a939b38d',
+  measurementId: env.VITE_FIREBASE_MEASUREMENT_ID || 'G-2FS1WCVWS0'
 };
 
 /**
