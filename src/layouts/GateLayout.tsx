@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
+import { OperationalStatusBar, OperationalModeBadge } from '../components/OperationalStatusBar';
 import { LogOut, User as UserIcon, QrCode, LayoutDashboard, DollarSign } from 'lucide-react';
 
 interface LayoutProps {
@@ -13,6 +14,7 @@ export const GateLayout: React.FC<LayoutProps> = ({ children, currentPath, onNav
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+      <OperationalStatusBar />
       {/* Top Bar */}
       <header className="sticky top-0 z-40 bg-slate-900/95 backdrop-blur border-b border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -26,6 +28,7 @@ export const GateLayout: React.FC<LayoutProps> = ({ children, currentPath, onNav
                 <span className="px-2 py-0.5 text-[10px] font-bold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 rounded-full uppercase">
                   Control de Puerta
                 </span>
+                <OperationalModeBadge />
               </div>
               <p className="text-xs text-slate-400">Validación de Boletos y Acceso</p>
             </div>

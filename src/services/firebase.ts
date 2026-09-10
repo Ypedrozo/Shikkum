@@ -75,3 +75,134 @@ export const db = dbInstance as Firestore;
 export const functions = functionsInstance as Functions;
 export const storage = storageInstance as FirebaseStorage;
 
+/**
+ * Control de resiliencia y salud de Firestore y Cloud Functions.
+ * Previene demoras y bloqueos de interfaz si Firestore API está deshabilitada en GCP
+ * o si Cloud Functions no han sido desplegadas en el proyecto de Firebase.
+ */
+const FIRESTORE_SESSION_HEALTHY_KEY = 'shikkum_firestore_session_healthy_v1';
+const FUNCTIONS_SESSION_HEALTHY_KEY = 'shikkum_functions_session_healthy_v1';
+
+const getInitialFirestoreHealthy = (): boolean => {
+  if (!isFirebaseConfigured || !dbInstance) return false;
+  try {
+    const cached = sessionStorage.getItem(FIRESTORE_SESSION_HEALTHY_KEY);
+    if (cached === 'false') return false;
+    if (cached === 'true') return true;
+  } catch {
+    // sessionStorage inaccesible en algunos iframes
+  }
+  return true;
+};
+
+let firestoreHealthy: boolean = getInitialFirestoreHealthy();
+let functionsHealthy: boolean = isFirebaseConfigured; // Habilitado de inmediato si Firebase está configurado
+let lastFirestoreCheckTime: number = 0;
+let lastFunctionsCheckTime: number = 0;
+
+export const isFirestoreHealthy = (): boolean => {
+  if (!isFirebaseConfigured || !dbInstance) return false;
+  try {
+    const cached = sessionStorage.getItem(FIRESTORE_SESSION_HEALTHY_KEY);
+    if (cached === 'false') {
+      if (Date.now() - lastFirestoreCheckTime < 60000) {
+        return false;
+      }
+    }
+  } catch {
+    // ignorar
+  }
+
+  if (!firestoreHealthy && Date.now() - lastFirestoreCheckTime > 60000) {
+    firestoreHealthy = true;
+  }
+  return firestoreHealthy;
+};
+
+export const markFirestoreFailure = (error?: any) => {
+  firestoreHealthy = false;
+  lastFirestoreCheckTime = Date.now();
+  try {
+    sessionStorage.setItem(FIRESTORE_SESSION_HEALTHY_KEY, 'false');
+  } catch {
+    // ignorar
+  }
+  const errMsg = error?.message || String(error || '');
+  console.warn('[Firebase Resilience] Advertencia en operación de Firestore:', errMsg);
+};
+
+export const markFirestoreSuccess = () => {
+  firestoreHealthy = true;
+  lastFirestoreCheckTime = Date.now();
+  try {
+    sessionStorage.setItem(FIRESTORE_SESSION_HEALTHY_KEY, 'true');
+  } catch {
+    // ignorar
+  }
+};
+
+export const resetFirestoreHealthCheck = () => {
+  firestoreHealthy = true;
+  lastFirestoreCheckTime = 0;
+  try {
+    sessionStorage.removeItem(FIRESTORE_SESSION_HEALTHY_KEY);
+  } catch {
+    // ignorar
+  }
+};
+
+export const isFunctionsHealthy = (): boolean => {
+  if (!isFirebaseConfigured || !functionsInstance) return false;
+  if (!functionsHealthy && Date.now() - lastFunctionsCheckTime > 60000) {
+    functionsHealthy = true;
+    return true;
+  }
+  return functionsHealthy;
+};
+
+export const markFunctionsFailure = (_error?: any) => {
+  functionsHealthy = false;
+  lastFunctionsCheckTime = Date.now();
+  try {
+    sessionStorage.setItem(FUNCTIONS_SESSION_HEALTHY_KEY, 'false');
+  } catch {
+    // ignorar
+  }
+};
+
+export const markFunctionsSuccess = () => {
+  functionsHealthy = true;
+  lastFunctionsCheckTime = Date.now();
+  try {
+    sessionStorage.setItem(FUNCTIONS_SESSION_HEALTHY_KEY, 'true');
+  } catch {
+    // ignorar
+  }
+};
+
+/**
+ * Envoltorio para operaciones asíncronas con límite de tiempo controlado (timeout).
+ * En producción el tiempo límite debe tolerar latencia real de red y cold starts (12 segundos por defecto).
+ */
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number = 12000,
+  timeoutMessage: string = 'La operación remota excedió el tiempo límite de espera.'
+): Promise<T> {
+  let timer: any;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`TIMEOUT: ${timeoutMessage}`));
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timer);
+    return result;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+

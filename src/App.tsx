@@ -17,6 +17,9 @@ import { PaymentRegistrationPage } from './pages/orders/PaymentRegistrationPage'
 import { AdminOrdersPage } from './pages/admin/AdminOrdersPage';
 import { AdminPaymentsPage } from './pages/admin/AdminPaymentsPage';
 import { AdminTicketsPage } from './pages/admin/AdminTicketsPage';
+import { AdminEmailDispatchesPage } from './pages/admin/AdminEmailDispatchesPage';
+import { AdminReportsPage } from './pages/admin/AdminReportsPage';
+import { AdminAuditPage } from './pages/admin/AdminAuditPage';
 import { GateDashboard } from './pages/gate/GateDashboard';
 import { AdminLayout } from './layouts/AdminLayout';
 import { CashierLayout } from './layouts/CashierLayout';
@@ -155,6 +158,12 @@ const AppRouter: React.FC = () => {
       adminContent = <AdminPaymentsPage onNavigate={(p) => navigate(p)} />;
     } else if (currentPath === '/admin/tickets' || currentPath === '/admin/tickets/') {
       adminContent = <AdminTicketsPage onNavigate={(p) => navigate(p)} />;
+    } else if (currentPath === '/admin/email-dispatches' || currentPath === '/admin/email-dispatches/') {
+      adminContent = <AdminEmailDispatchesPage onNavigate={(p) => navigate(p)} />;
+    } else if (currentPath === '/admin/reports' || currentPath === '/admin/reports/') {
+      adminContent = <AdminReportsPage onNavigate={(p) => navigate(p)} />;
+    } else if (currentPath === '/admin/audit' || currentPath === '/admin/audit/') {
+      adminContent = <AdminAuditPage onNavigate={(p) => navigate(p)} />;
     }
 
     return (

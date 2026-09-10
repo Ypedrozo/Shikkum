@@ -7,7 +7,13 @@ import {
   updateDoc,
   deleteDoc
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from './firebase';
+import {
+  db,
+  isFirebaseConfigured,
+  isFirestoreHealthy,
+  markFirestoreFailure,
+  withTimeout
+} from './firebase';
 import { PriceRule, PricePreviewRequest, PricePreviewResult } from '../types';
 import { eventService } from './event.service';
 
@@ -194,10 +200,10 @@ class PricingService {
    * Obtiene todas las reglas registradas
    */
   public async getAllRules(): Promise<PriceRule[]> {
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const colRef = collection(db, 'price_rules');
-        const snap = await getDocs(colRef);
+        const snap = await withTimeout(getDocs(colRef), 800);
         const list: PriceRule[] = [];
         snap.forEach((docSnap) => {
           list.push({ id: docSnap.id, ...docSnap.data() } as PriceRule);
@@ -205,8 +211,8 @@ class PricingService {
         if (list.length > 0) {
           return list;
         }
-      } catch {
-        // Fallback local
+      } catch (err: any) {
+        markFirestoreFailure(err);
       }
     }
 
@@ -227,15 +233,15 @@ class PricingService {
    * Obtiene una regla por ID
    */
   public async getRuleById(id: string): Promise<PriceRule | null> {
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'price_rules', id);
-        const snap = await getDoc(docRef);
+        const snap = await withTimeout(getDoc(docRef), 800);
         if (snap.exists()) {
           return { id: snap.id, ...snap.data() } as PriceRule;
         }
-      } catch {
-        // Fallback local
+      } catch (err: any) {
+        markFirestoreFailure(err);
       }
     }
 

@@ -6,7 +6,13 @@ import {
   setDoc,
   updateDoc
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from './firebase';
+import {
+  db,
+  isFirebaseConfigured,
+  isFirestoreHealthy,
+  markFirestoreFailure,
+  withTimeout
+} from './firebase';
 import { Event, EventStatus } from '../types';
 
 const STORAGE_KEY = 'shikkum_events_store_v1';
@@ -119,10 +125,10 @@ class EventService {
    * Obtiene la lista completa de eventos
    */
   public async getEvents(): Promise<Event[]> {
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const colRef = collection(db, 'events');
-        const snap = await getDocs(colRef);
+        const snap = await withTimeout(getDocs(colRef), 800);
         const list: Event[] = [];
         snap.forEach((docSnap) => {
           list.push({ id: docSnap.id, ...docSnap.data() } as Event);
@@ -130,8 +136,8 @@ class EventService {
         if (list.length > 0) {
           return list;
         }
-      } catch {
-        // Fallback local
+      } catch (err: any) {
+        markFirestoreFailure(err);
       }
     }
 
@@ -142,15 +148,15 @@ class EventService {
    * Obtiene un evento por ID
    */
   public async getEventById(id: string): Promise<Event | null> {
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'events', id);
-        const snap = await getDoc(docRef);
+        const snap = await withTimeout(getDoc(docRef), 800);
         if (snap.exists()) {
           return { id: snap.id, ...snap.data() } as Event;
         }
-      } catch {
-        // Fallback local
+      } catch (err: any) {
+        markFirestoreFailure(err);
       }
     }
 

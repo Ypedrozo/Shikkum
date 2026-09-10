@@ -9,7 +9,16 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import QRCode from 'qrcode';
-import { db, functions, isFirebaseConfigured } from './firebase';
+import {
+  db,
+  functions,
+  isFirebaseConfigured,
+  isFirestoreHealthy,
+  markFirestoreFailure,
+  isFunctionsHealthy,
+  markFunctionsFailure,
+  withTimeout
+} from './firebase';
 import {
   Ticket,
   AccessLog,
@@ -151,17 +160,18 @@ class TicketService {
    * Obtener tickets emitidos para una orden
    */
   async getTicketsByOrderId(orderId: string): Promise<Ticket[]> {
-    if (isFirebaseConfigured && db) {
+    if (isFirebaseConfigured && db && isFirestoreHealthy()) {
       try {
         const q = query(collection(db, 'tickets'), where('orderId', '==', orderId));
-        const snapshot = await getDocs(q);
+        const snapshot = await withTimeout(getDocs(q), 800);
         const tickets: Ticket[] = [];
         snapshot.forEach((d) => tickets.push(d.data() as Ticket));
-        tickets.sort((a, b) => a.ticketCode.localeCompare(b.ticketCode));
-        return tickets;
+        if (tickets.length > 0) {
+          tickets.sort((a, b) => a.ticketCode.localeCompare(b.ticketCode));
+          return tickets;
+        }
       } catch (err: any) {
-        console.error('[TicketService] Error consultando tickets en Firestore:', err);
-        throw new Error('Error al consultar boletos de la orden en Firestore: ' + (err.message || ''));
+        markFirestoreFailure(err);
       }
     }
 
@@ -175,16 +185,14 @@ class TicketService {
    * Obtener ticket por su ID único
    */
   async getTicketById(ticketId: string): Promise<Ticket | null> {
-    if (isFirebaseConfigured && db) {
+    if (isFirebaseConfigured && db && isFirestoreHealthy()) {
       try {
-        const snap = await getDoc(doc(db, 'tickets', ticketId));
+        const snap = await withTimeout(getDoc(doc(db, 'tickets', ticketId)), 800);
         if (snap.exists()) {
           return snap.data() as Ticket;
         }
-        return null;
       } catch (err: any) {
-        console.error('[TicketService] Error obteniendo ticket en Firestore:', err);
-        throw new Error('Error al consultar boleto en Firestore: ' + (err.message || ''));
+        markFirestoreFailure(err);
       }
     }
 
@@ -202,34 +210,31 @@ class TicketService {
       throw new Error('Los operadores de puerta no tienen autorización para consultar la lista global de boletos.');
     }
 
-    if (isFirebaseConfigured && db) {
+    let list: Ticket[] = [];
+    if (isFirebaseConfigured && db && isFirestoreHealthy()) {
       try {
-        const snapshot = await getDocs(collection(db, 'tickets'));
-        let list: Ticket[] = [];
+        const q = filter?.eventId
+          ? query(collection(db, 'tickets'), where('eventId', '==', filter.eventId), limit(150))
+          : query(collection(db, 'tickets'), limit(150));
+        const snapshot = await withTimeout(getDocs(q), 800);
         snapshot.forEach((d) => list.push(d.data() as Ticket));
-        if (filter?.eventId) {
-          list = list.filter((t) => t.eventId === filter.eventId);
-        }
-        if (filter?.status && filter.status !== 'ALL') {
-          list = list.filter((t) => t.status === filter.status);
-        }
-        list.sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime());
-        return list;
       } catch (err: any) {
-        console.error('[TicketService] Error consultando todos los tickets en Firestore:', err);
-        throw new Error('Error al consultar boletos en Firestore: ' + (err.message || ''));
+        markFirestoreFailure(err);
       }
     }
 
-    let local = this.getLocalTickets();
+    if (list.length === 0) {
+      list = this.getLocalTickets();
+    }
+
     if (filter?.eventId) {
-      local = local.filter((t) => t.eventId === filter.eventId);
+      list = list.filter((t) => t.eventId === filter.eventId);
     }
     if (filter?.status && filter.status !== 'ALL') {
-      local = local.filter((t) => t.status === filter.status);
+      list = list.filter((t) => t.status === filter.status);
     }
-    local.sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime());
-    return local;
+    list.sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime());
+    return list;
   }
 
   /**
@@ -281,18 +286,21 @@ class TicketService {
       };
     }
 
-    // 1. Intentar llamar a Cloud Function validateTicketAccess
-    if (functions) {
+    // 1. Intentar llamar a Cloud Function validateTicketAccess si está confirmada disponible
+    if (functions && isFunctionsHealthy()) {
       try {
         const fn = httpsCallable<ValidateAccessRequest, ValidateAccessResponse>(functions, 'validateTicketAccess');
-        const result = await fn({
-          qrToken: trimmedToken || undefined,
-          ticketCode: trimmedCode || undefined,
-          gateId,
-          eventId
-        });
+        const result = await withTimeout(
+          fn({
+            qrToken: trimmedToken || undefined,
+            ticketCode: trimmedCode || undefined,
+            gateId,
+            eventId
+          }),
+          12000
+        );
 
-        if (result.data) {
+        if (result?.data) {
           // Reflejar cambio en cache local para pruebas offline
           if (result.data.ticket) {
             this.syncLocalTicketUsed(result.data.ticket.id, currentUser, gateId);
@@ -300,7 +308,7 @@ class TicketService {
           return result.data;
         }
       } catch (fnError: any) {
-        console.warn('[TicketService] Falló invocación de Cloud Function validateTicketAccess:', fnError);
+        markFunctionsFailure(fnError);
         const code = fnError?.code;
         const msg = fnError?.message || '';
 
@@ -313,11 +321,27 @@ class TicketService {
           };
         }
 
-        console.warn('[TicketService] Cloud Function validateTicketAccess no disponible, procediendo con validación directa/local:', fnError);
+        if (isFirebaseConfigured) {
+          return {
+            authorized: false,
+            status: 'REJECTED',
+            rejectionReason: 'SERVICE_UNAVAILABLE',
+            message: 'No se pudo verificar el boleto en el servidor: ' + (msg || 'Error de conexión con Firebase.')
+          };
+        }
       }
     }
 
-    // 2. Validación en Sandbox Local con estricta idempotencia y auditoría
+    if (isFirebaseConfigured) {
+      return {
+        authorized: false,
+        status: 'REJECTED',
+        rejectionReason: 'SERVICE_UNAVAILABLE',
+        message: 'Servicio de validación de entradas no disponible en este momento.'
+      };
+    }
+
+    // 2. Validación en Sandbox Local con estricta idempotencia y auditoría (Solo en modo desarrollo / sin Firebase)
     return this.executeLocalTicketValidation(trimmedToken, trimmedCode, currentUser, gateId, eventId);
   }
 
@@ -405,17 +429,24 @@ class TicketService {
     const currentUser = authService.getCurrentUser();
     if (!currentUser) throw new Error('Usuario no autenticado.');
 
-    if (functions) {
+    if (functions && isFunctionsHealthy()) {
       try {
         const fn = httpsCallable<{ orderId: string }, { success: boolean; orderId: string; ticketsIssuedCount: number; message: string }>(
           functions,
           'issueTicketsForOrder'
         );
-        const res = await fn({ orderId });
+        const res = await withTimeout(fn({ orderId }), 12000);
         return res.data;
       } catch (err: any) {
-        console.warn('[TicketService] Cloud Function issueTicketsForOrder error, usando fallback local:', err);
+        markFunctionsFailure(err);
+        if (isFirebaseConfigured) {
+          throw new Error('No se pudieron emitir los boletos en Firebase: ' + (err?.message || 'Error de conexión.'));
+        }
       }
+    }
+
+    if (isFirebaseConfigured) {
+      throw new Error('Servicio de emisión de boletos de Firebase no disponible.');
     }
 
     // Sandbox local
@@ -438,17 +469,24 @@ class TicketService {
     const currentUser = authService.getCurrentUser();
     if (!currentUser) throw new Error('Usuario no autenticado.');
 
-    if (functions) {
+    if (functions && isFunctionsHealthy()) {
       try {
         const fn = httpsCallable<{ orderId: string }, { success: boolean; orderId: string; ticketsIssuedCount: number; message: string }>(
           functions,
           'generateTicketsForOrder'
         );
-        const res = await fn({ orderId });
+        const res = await withTimeout(fn({ orderId }), 12000);
         return res.data;
       } catch (err: any) {
-        console.warn('[TicketService] Cloud Function generateTicketsForOrder error, usando fallback local:', err);
+        markFunctionsFailure(err);
+        if (isFirebaseConfigured) {
+          throw new Error('No se pudieron generar los boletos en Firebase: ' + (err?.message || 'Error de conexión.'));
+        }
       }
+    }
+
+    if (isFirebaseConfigured) {
+      throw new Error('Servicio de generación de boletos de Firebase no disponible.');
     }
 
     return this.issueTicketsForOrder(orderId);

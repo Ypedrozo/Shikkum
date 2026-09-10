@@ -6,6 +6,8 @@
  * sin modificar el resto de la lógica de tickets, pagos, órdenes ni base de datos.
  */
 
+import { Resend } from 'resend';
+
 export interface TicketEmailItem {
   ticketId: string;
   ticketCode: string;
@@ -90,10 +92,10 @@ export function generateTicketsEmailHtml(payload: TicketEmailPayload): string {
                 Código: <span style="color: #f1f5f9; background-color: #0f172a; padding: 2px 6px; border-radius: 4px; border: 1px solid #475569;">${t.ticketCode}</span>
               </div>
             </td>
-            <td style="text-align: right; vertical-align: middle; width: 100px;">
+            <td style="text-align: right; vertical-align: middle; width: 110px;">
               <div style="display: inline-block; background-color: #ffffff; padding: 6px; border-radius: 8px; border: 1px solid #cbd5e1; text-align: center;">
-                <div style="font-size: 9px; color: #0f172a; font-weight: bold; margin-bottom: 2px;">QR DE ACCESO</div>
-                <div style="font-size: 10px; color: #64748b; font-family: monospace;">[UN SOLO USO]</div>
+                <img src="https://api.qrserver.com/v1/create-qr-code/?size=90x90&margin=2&data=${encodeURIComponent(t.qrToken)}" width="90" height="90" alt="QR ${t.ticketCode}" style="display: block; border: 0; outline: none; text-decoration: none;" />
+                <div style="font-size: 8px; color: #0f172a; font-weight: bold; margin-top: 3px; font-family: monospace;">QR DE ACCESO</div>
               </div>
             </td>
           </tr>
@@ -380,5 +382,103 @@ export class DefaultEmailProvider implements IEmailProvider {
   }
 }
 
-// Instancia desacoplada por defecto
-export const emailProvider: IEmailProvider = new DefaultEmailProvider();
+export class ResendEmailProvider implements IEmailProvider {
+  name = 'resend';
+
+  async sendTicketsEmail(payload: TicketEmailPayload): Promise<EmailSendResult> {
+    const nowIso = new Date().toISOString();
+
+    // 1. Validar formato de correo del destinatario
+    if (!payload.recipientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.recipientEmail.trim())) {
+      return {
+        success: false,
+        provider: this.name,
+        sentAt: nowIso,
+        error: `Dirección de correo electrónico inválida: '${payload.recipientEmail}'`
+      };
+    }
+
+    // 2. Validar que existan boletos
+    if (!payload.tickets || payload.tickets.length === 0) {
+      return {
+        success: false,
+        provider: this.name,
+        sentAt: nowIso,
+        error: 'El paquete de despacho no contiene boletos para enviar.'
+      };
+    }
+
+    // 3. Obtener clave de API desde el entorno o Firebase Secret Manager
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey || apiKey.trim() === '') {
+      const errorMsg =
+        'RESEND_API_KEY no está configurada en las variables de entorno ni en Firebase Secret Manager de Cloud Functions.';
+      console.error(`[ResendEmailProvider] Configuración incompleta: ${errorMsg}`);
+      return {
+        success: false,
+        provider: this.name,
+        sentAt: nowIso,
+        error: errorMsg
+      };
+    }
+
+    try {
+      const resend = new Resend(apiKey.trim());
+      const htmlContent = generateTicketsEmailHtml(payload);
+      const textContent = generateTicketsEmailText(payload);
+      const fromAddress =
+        process.env.RESEND_FROM_EMAIL?.trim() || 'SHIKKUM Entradas <onboarding@resend.dev>';
+      const subject = payload.isResend
+        ? `[Reenvío] SHIKKUM — Tus entradas para ${payload.eventTitle} (${payload.orderCode})`
+        : `SHIKKUM — Tus entradas para ${payload.eventTitle} (${payload.orderCode})`;
+
+      console.log(`[ResendEmailProvider] Enviando vía Resend a ${payload.recipientEmail} (${payload.tickets.length} entradas, orden: ${payload.orderCode})`);
+
+      const response = await resend.emails.send({
+        from: fromAddress,
+        to: [payload.recipientEmail.trim()],
+        subject,
+        html: htmlContent,
+        text: textContent
+      });
+
+      if (response.error) {
+        console.error('[ResendEmailProvider] Error devuelto por la API de Resend:', response.error);
+        return {
+          success: false,
+          provider: this.name,
+          sentAt: nowIso,
+          error: `Resend API Error (${response.error.name || 'Error'}): ${response.error.message}`
+        };
+      }
+
+      if (response.data && response.data.id) {
+        console.log(`[ResendEmailProvider] Correo enviado exitosamente vía Resend. Message ID: ${response.data.id}`);
+        return {
+          success: true,
+          messageId: response.data.id,
+          provider: this.name,
+          sentAt: nowIso
+        };
+      }
+
+      return {
+        success: false,
+        provider: this.name,
+        sentAt: nowIso,
+        error: 'Resend no devolvió un identificador de mensaje (messageId) válido.'
+      };
+    } catch (err: any) {
+      console.error('[ResendEmailProvider] Excepción al invocar servicio Resend:', err);
+      return {
+        success: false,
+        provider: this.name,
+        sentAt: nowIso,
+        error: err?.message || 'Error inesperado al conectar con el servicio de correo Resend.'
+      };
+    }
+  }
+}
+
+// Instancia activa oficial: ResendEmailProvider
+export const emailProvider: IEmailProvider = new ResendEmailProvider();

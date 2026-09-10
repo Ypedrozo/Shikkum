@@ -1,11 +1,19 @@
-import { collection, doc, setDoc, getDocs, query, where } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from './firebase';
+import { collection, doc, setDoc, getDocs, query, where, limit } from 'firebase/firestore';
+import {
+  db,
+  isFirebaseConfigured,
+  isFirestoreHealthy,
+  markFirestoreFailure,
+  withTimeout
+} from './firebase';
 import { AuditLog, AuditAction, SystemRole } from '../types';
 import { authService } from './auth.service';
 
 const AUDIT_STORAGE_KEY = 'shikkum_audit_logs_store_v1';
 
 class AuditService {
+  private orderLogsCache = new Map<string, { data: AuditLog[]; timestamp: number }>();
+
   private hasLiveFirebase(): boolean {
     return Boolean(isFirebaseConfigured && db);
   }
@@ -41,7 +49,12 @@ class AuditService {
     const timestamp = new Date().toISOString();
     const auditId = `aud_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
-    const logEntry: AuditLog = {
+    const orderId =
+      params.entityType === 'order'
+        ? params.entityId
+        : (params.metadata?.orderId as string | undefined) || undefined;
+
+    const logEntry: AuditLog & { orderId?: string } = {
       id: auditId,
       timestamp,
       userId: activeUser?.uid || 'system',
@@ -51,25 +64,27 @@ class AuditService {
       action: params.action,
       entityType: params.entityType,
       entityId: params.entityId,
+      orderId,
       metadata: params.metadata || {}
     };
 
-    if (this.hasLiveFirebase() && db) {
-      try {
-        await setDoc(doc(db, 'audit_logs', auditId), logEntry);
-        return logEntry;
-      } catch (err) {
-        console.error('[AuditService] Error registrando auditoría en Firestore:', err);
-        if (isFirebaseConfigured) {
-          throw new Error('No se pudo persistir el registro de auditoría obligatorio en Firestore.');
-        }
-      }
+    if (orderId) {
+      this.orderLogsCache.delete(orderId);
     }
 
-    // Almacenamiento local (Sandbox Demo)
+    // Almacenamiento local inmediato (garantiza persistencia instantánea en el navegador)
     const local = this.getLocalLogs();
     local.unshift(logEntry);
     this.saveLocalLogs(local);
+
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
+      try {
+        await withTimeout(setDoc(doc(db, 'audit_logs', auditId), logEntry), 400);
+      } catch (err) {
+        markFirestoreFailure(err);
+      }
+    }
+
     return logEntry;
   }
 
@@ -77,13 +92,14 @@ class AuditService {
    * Obtener registros de auditoría vinculados a una entidad
    */
   async getLogsByEntityId(entityId: string): Promise<AuditLog[]> {
-    if (this.hasLiveFirebase() && db) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const q = query(
           collection(db, 'audit_logs'),
-          where('entityId', '==', entityId)
+          where('entityId', '==', entityId),
+          limit(50)
         );
-        const snap = await getDocs(q);
+        const snap = await withTimeout(getDocs(q), 400);
         if (!snap.empty) {
           const list = snap.docs.map((d) => d.data() as AuditLog);
           list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -91,15 +107,14 @@ class AuditService {
         }
         return [];
       } catch (err) {
-        console.error('[AuditService] Error consultando auditoría en Firestore:', err);
-        throw new Error('Error al consultar el historial de auditoría en Firestore.');
+        markFirestoreFailure(err);
       }
     }
 
     // Modo Sandbox Demo
     const local = this.getLocalLogs();
     return local
-      .filter((l) => l.entityId === entityId || l.metadata?.orderId === entityId)
+      .filter((l) => l.entityId === entityId || l.metadata?.orderId === entityId || (l as any).orderId === entityId)
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 
@@ -107,30 +122,60 @@ class AuditService {
    * Obtener registros de auditoría vinculados a una orden (incluye pagos y tickets de la orden)
    */
   async getLogsForOrder(orderId: string): Promise<AuditLog[]> {
-    if (this.hasLiveFirebase() && db) {
+    const cached = this.orderLogsCache.get(orderId);
+    if (cached && Date.now() - cached.timestamp < 15000) {
+      return cached.data;
+    }
+
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        const [directLogsSnap, metaLogsSnap] = await Promise.all([
-          getDocs(query(collection(db, 'audit_logs'), where('entityId', '==', orderId))),
-          getDocs(query(collection(db, 'audit_logs'), where('metadata.orderId', '==', orderId)))
-        ]);
+        const q = query(
+          collection(db, 'audit_logs'),
+          where('entityId', '==', orderId),
+          limit(50)
+        );
+        const directLogsSnap = await withTimeout(getDocs(q), 400);
 
-        const map = new Map<string, AuditLog>();
-        directLogsSnap.forEach((d) => map.set(d.id, d.data() as AuditLog));
-        metaLogsSnap.forEach((d) => map.set(d.id, d.data() as AuditLog));
-
-        const list = Array.from(map.values());
+        const list: AuditLog[] = [];
+        directLogsSnap.forEach((d) => list.push(d.data() as AuditLog));
         list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        this.orderLogsCache.set(orderId, { data: list, timestamp: Date.now() });
         return list;
       } catch (err) {
-        console.error('[AuditService] Error consultando auditoría de orden en Firestore:', err);
-        throw new Error('Error al consultar el historial de auditoría de la orden en Firestore.');
+        markFirestoreFailure(err);
+      }
+    }
+
+    const local = this.getLocalLogs();
+    const result = local
+      .filter((l) => l.entityId === orderId || l.metadata?.orderId === orderId || (l as any).orderId === orderId)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    this.orderLogsCache.set(orderId, { data: result, timestamp: Date.now() });
+    return result;
+  }
+
+  /**
+   * Obtener bitácora de actividad reciente para dashboard y módulo de auditoría
+   */
+  async getRecentLogs(limitCount = 50): Promise<AuditLog[]> {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
+      try {
+        const q = query(collection(db, 'audit_logs'), limit(limitCount));
+        const snap = await withTimeout(getDocs(q), 500);
+        if (!snap.empty) {
+          const list = snap.docs.map((d) => d.data() as AuditLog);
+          list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          return list;
+        }
+      } catch (err) {
+        markFirestoreFailure(err);
       }
     }
 
     const local = this.getLocalLogs();
     return local
-      .filter((l) => l.entityId === orderId || l.metadata?.orderId === orderId)
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, limitCount);
   }
 }
 

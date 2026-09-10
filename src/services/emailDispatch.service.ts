@@ -2,10 +2,20 @@ import {
   collection,
   getDocs,
   query,
-  where
+  where,
+  limit
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { db, functions, isFirebaseConfigured } from './firebase';
+import {
+  db,
+  functions,
+  isFirebaseConfigured,
+  isFirestoreHealthy,
+  markFirestoreFailure,
+  isFunctionsHealthy,
+  markFunctionsFailure,
+  withTimeout
+} from './firebase';
 import { EmailDispatch, SendTicketsEmailResponse } from '../types';
 import { authService } from './auth.service';
 import { orderService } from './order.service';
@@ -49,23 +59,24 @@ class EmailDispatchService {
    * Obtener todos los despachos de correo registrados para una orden
    */
   async getDispatchesByOrderId(orderId: string): Promise<EmailDispatch[]> {
-    if (isFirebaseConfigured && db) {
+    if (isFirebaseConfigured && db && isFirestoreHealthy()) {
       try {
         const q = query(
           collection(db, 'email_dispatches'),
           where('orderId', '==', orderId)
         );
-        const snapshot = await getDocs(q);
+        const snapshot = await withTimeout(getDocs(q), 800);
         const list: EmailDispatch[] = [];
         snapshot.forEach((d) => list.push(d.data() as EmailDispatch));
-        list.sort(
-          (a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        return list;
+        if (list.length > 0) {
+          list.sort(
+            (a, b) =>
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
+          return list;
+        }
       } catch (err: any) {
-        console.error('[EmailDispatchService] Error consultando email_dispatches en Firestore:', err);
-        throw new Error('Error al consultar despachos de correo en Firestore: ' + (err.message || ''));
+        markFirestoreFailure(err);
       }
     }
 
@@ -87,6 +98,37 @@ class EmailDispatchService {
   }
 
   /**
+   * Obtener todos los despachos para módulo de control de correos
+   */
+  async getAllDispatches(limitCount = 100): Promise<EmailDispatch[]> {
+    if (isFirebaseConfigured && db && isFirestoreHealthy()) {
+      try {
+        const q = query(collection(db, 'email_dispatches'), limit(limitCount));
+        const snapshot = await withTimeout(getDocs(q), 800);
+        if (!snapshot.empty) {
+          const list: EmailDispatch[] = [];
+          snapshot.forEach((d) => list.push(d.data() as EmailDispatch));
+          list.sort(
+            (a, b) =>
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
+          return list;
+        }
+      } catch (err: any) {
+        markFirestoreFailure(err);
+      }
+    }
+
+    const localDispatches = this.getLocalDispatches();
+    return [...localDispatches]
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      )
+      .slice(0, limitCount);
+  }
+
+  /**
    * Enviar correo con el paquete de entradas al comprador de una orden pagada
    */
   async sendTicketsEmail(orderId: string): Promise<SendTicketsEmailResponse> {
@@ -103,28 +145,50 @@ class EmailDispatchService {
       );
     }
 
-    // 1. Intentar llamar a Cloud Function 2nd Gen
-    if (functions) {
+    // 1. Intentar llamar a Cloud Function 2nd Gen si está disponible
+    if (functions && isFunctionsHealthy()) {
       try {
         const fn = httpsCallable<{ orderId: string }, SendTicketsEmailResponse>(
           functions,
           'sendTicketsEmail'
         );
-        const res = await fn({ orderId });
-        if (res.data) {
-          // Si fue exitoso o falló en CF, sincronizar estado local
+        const res = await withTimeout(fn({ orderId }), 12000);
+        if (res?.data) {
+          // Sincronizar estado local con resultado real del servidor
           this.syncLocalAfterDispatch(orderId, res.data);
           return res.data;
         }
       } catch (fnError: any) {
-        console.warn(
-          '[EmailDispatchService] Cloud Function sendTicketsEmail no disponible o error, usando fallback:',
-          fnError
-        );
+        markFunctionsFailure(fnError);
+        if (isFirebaseConfigured) {
+          return {
+            success: false,
+            orderId,
+            dispatchId: `dsp_fail_${Date.now()}`,
+            status: 'FAILED',
+            recipient: 'desconocido@shikkum.internal',
+            ticketCount: 0,
+            message: 'Las entradas están vigentes pero no se pudo contactar el servicio de correo.',
+            errorMessage: fnError?.message || 'Error en Cloud Function sendTicketsEmail.'
+          };
+        }
       }
     }
 
-    // 2. Sandbox Local / Directo
+    if (isFirebaseConfigured) {
+      return {
+        success: false,
+        orderId,
+        dispatchId: `dsp_fail_${Date.now()}`,
+        status: 'FAILED',
+        recipient: 'desconocido@shikkum.internal',
+        ticketCount: 0,
+        message: 'Servicio de correo de Firebase no disponible.',
+        errorMessage: 'Functions no disponibles.'
+      };
+    }
+
+    // 2. Sandbox Local / Directo (Solo si Firebase no está configurado)
     return this.executeLocalSendTicketsEmail(orderId, currentUser, false);
   }
 
@@ -148,27 +212,49 @@ class EmailDispatchService {
       );
     }
 
-    // 1. Intentar llamar a Cloud Function 2nd Gen
-    if (functions) {
+    // 1. Intentar llamar a Cloud Function 2nd Gen si está disponible
+    if (functions && isFunctionsHealthy()) {
       try {
         const fn = httpsCallable<
           { orderId: string; customRecipient?: string },
           SendTicketsEmailResponse
         >(functions, 'resendTicketsEmail');
-        const res = await fn({ orderId, customRecipient });
-        if (res.data) {
+        const res = await withTimeout(fn({ orderId, customRecipient }), 12000);
+        if (res?.data) {
           this.syncLocalAfterDispatch(orderId, res.data, true);
           return res.data;
         }
       } catch (fnError: any) {
-        console.warn(
-          '[EmailDispatchService] Cloud Function resendTicketsEmail no disponible o error, usando fallback:',
-          fnError
-        );
+        markFunctionsFailure(fnError);
+        if (isFirebaseConfigured) {
+          return {
+            success: false,
+            orderId,
+            dispatchId: `dsp_fail_${Date.now()}`,
+            status: 'FAILED',
+            recipient: customRecipient || 'desconocido@shikkum.internal',
+            ticketCount: 0,
+            message: 'No se pudo completar el reenvío del correo.',
+            errorMessage: fnError?.message || 'Error en Cloud Function resendTicketsEmail.'
+          };
+        }
       }
     }
 
-    // 2. Sandbox Local / Directo
+    if (isFirebaseConfigured) {
+      return {
+        success: false,
+        orderId,
+        dispatchId: `dsp_fail_${Date.now()}`,
+        status: 'FAILED',
+        recipient: customRecipient || 'desconocido@shikkum.internal',
+        ticketCount: 0,
+        message: 'Servicio de reenvío de correo de Firebase no disponible.',
+        errorMessage: 'Functions no disponibles.'
+      };
+    }
+
+    // 2. Sandbox Local / Directo (Solo si Firebase no está configurado)
     return this.executeLocalSendTicketsEmail(orderId, currentUser, true, customRecipient);
   }
 

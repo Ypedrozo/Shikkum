@@ -29,20 +29,26 @@ import { useAuth } from '../../context/AuthContext';
 interface OrderTicketsListProps {
   orderId: string;
   orderStatus: string;
+  initialOrder?: Order | null;
+  initialCustomerEmail?: string;
+  initialEvent?: Event | null;
 }
 
 export const OrderTicketsList: React.FC<OrderTicketsListProps> = ({
   orderId,
-  orderStatus
+  orderStatus,
+  initialOrder,
+  initialCustomerEmail,
+  initialEvent
 }) => {
   const { user } = useAuth();
   const isCashierOrAdmin = user?.role === 'admin' || user?.role === 'cashier';
 
-  const [order, setOrder] = useState<Order | null>(null);
-  const [event, setEvent] = useState<Event | null>(null);
+  const [order, setOrder] = useState<Order | null>(initialOrder || null);
+  const [event, setEvent] = useState<Event | null>(initialEvent || null);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [dispatches, setDispatches] = useState<EmailDispatch[]>([]);
-  const [customerEmail, setCustomerEmail] = useState<string>('');
+  const [customerEmail, setCustomerEmail] = useState<string>(initialCustomerEmail || '');
   
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
@@ -57,8 +63,9 @@ export const OrderTicketsList: React.FC<OrderTicketsListProps> = ({
   const loadData = async () => {
     try {
       setIsLoading(true);
+      // Evitar consulta redundante si initialOrder fue suministrado
       const [ordData, ticketsData, dispatchesData] = await Promise.all([
-        orderService.getOrderById(orderId),
+        initialOrder ? Promise.resolve(initialOrder) : orderService.getOrderById(orderId),
         ticketService.getTicketsByOrderId(orderId),
         emailDispatchService.getDispatchesByOrderId(orderId)
       ]);
@@ -68,13 +75,17 @@ export const OrderTicketsList: React.FC<OrderTicketsListProps> = ({
       setDispatches(dispatchesData);
 
       if (ordData) {
-        // Cargar datos del evento
-        if (ordData.eventId) {
+        // Cargar datos del evento solo si no se pasó initialEvent
+        if (initialEvent) {
+          setEvent(initialEvent);
+        } else if (ordData.eventId) {
           const evt = await eventService.getEventById(ordData.eventId);
           setEvent(evt);
         }
-        // Cargar correo del cliente
-        if (ordData.customerId) {
+        // Cargar correo del cliente solo si no se pasó initialCustomerEmail
+        if (initialCustomerEmail) {
+          setCustomerEmail(initialCustomerEmail);
+        } else if (ordData.customerId) {
           const cust = await customerService.getCustomerById(ordData.customerId);
           if (cust?.email) {
             setCustomerEmail(cust.email);

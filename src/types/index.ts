@@ -102,6 +102,8 @@ export interface PaymentFilterParams {
   status?: PaymentStatus;
   method?: PaymentMethod;
   eventId?: string;
+  startDate?: string;
+  endDate?: string;
   sortByDate?: 'asc' | 'desc';
 }
 
@@ -117,8 +119,21 @@ export type AuditAction =
   | 'TICKET_GENERATED'
   | 'TICKET_SENT'
   | 'TICKET_RESENT'
+  | 'TICKET_USED'
+  | 'TICKET_CANCELLED'
+  | 'TICKET_REJECTED'
+  | 'EMAIL_SENT'
+  | 'EMAIL_FAILED'
   | 'ORDER_CREATED'
-  | 'ORDER_CANCELLED';
+  | 'ORDER_CANCELLED'
+  | 'CUSTOMER_CREATED'
+  | 'CUSTOMER_UPDATED'
+  | 'EVENT_CREATED'
+  | 'EVENT_UPDATED'
+  | 'EVENT_CLOSED'
+  | 'EVENT_CANCELLED'
+  | 'PRICE_RULE_CREATED'
+  | 'PRICE_RULE_UPDATED';
 
 export interface AuditLog {
   id: string;
@@ -427,7 +442,8 @@ export interface ValidateAccessResponse {
     | 'UNAUTHORIZED'
     | 'UNAUTHORIZED_OPERATOR'
     | 'ORDER_NOT_PAID'
-    | 'INVALID_STATUS';
+    | 'INVALID_STATUS'
+    | 'SERVICE_UNAVAILABLE';
   message: string;
 }
 

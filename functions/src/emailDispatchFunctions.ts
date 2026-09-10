@@ -324,7 +324,8 @@ export const generateTicketsForOrder = onCall<{ orderId: string }>(
 export const sendTicketsEmail = onCall<{ orderId: string }>(
   {
     cors: true,
-    maxInstances: 10
+    maxInstances: 10,
+    secrets: ['RESEND_API_KEY']
   },
   async (request: CallableRequest<{ orderId: string }>) => {
     if (!request.auth) {
@@ -355,7 +356,8 @@ export const resendTicketsEmail = onCall<{
 }>(
   {
     cors: true,
-    maxInstances: 10
+    maxInstances: 10,
+    secrets: ['RESEND_API_KEY']
   },
   async (request: CallableRequest<{ orderId: string; customRecipient?: string }>) => {
     if (!request.auth) {

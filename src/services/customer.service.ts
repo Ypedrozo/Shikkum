@@ -4,9 +4,17 @@ import {
   getDocs,
   getDoc,
   setDoc,
-  updateDoc
+  updateDoc,
+  query,
+  limit
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from './firebase';
+import {
+  db,
+  isFirebaseConfigured,
+  isFirestoreHealthy,
+  markFirestoreFailure,
+  withTimeout
+} from './firebase';
 import { Customer } from '../types';
 
 const STORAGE_KEY = 'shikkum_customers_store_v1';
@@ -111,10 +119,10 @@ class CustomerService {
    * Obtiene todos los clientes
    */
   public async getCustomers(): Promise<Customer[]> {
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const colRef = collection(db, 'customers');
-        const snap = await getDocs(colRef);
+        const snap = await withTimeout(getDocs(query(colRef, limit(100))), 500);
         const list: Customer[] = [];
         snap.forEach((docSnap) => {
           list.push({ id: docSnap.id, ...docSnap.data() } as Customer);
@@ -122,8 +130,8 @@ class CustomerService {
         if (list.length > 0) {
           return list;
         }
-      } catch {
-        // En caso de error de red o regla en dev, recurrir a almacenamiento local
+      } catch (err: any) {
+        markFirestoreFailure(err);
       }
     }
 
@@ -134,15 +142,15 @@ class CustomerService {
    * Obtiene un cliente por ID
    */
   public async getCustomerById(id: string): Promise<Customer | null> {
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'customers', id);
-        const snap = await getDoc(docRef);
+        const snap = await withTimeout(getDoc(docRef), 800);
         if (snap.exists()) {
           return { id: snap.id, ...snap.data() } as Customer;
         }
-      } catch {
-        // Fallback local
+      } catch (err: any) {
+        markFirestoreFailure(err);
       }
     }
 

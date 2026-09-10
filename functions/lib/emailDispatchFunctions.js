@@ -270,7 +270,8 @@ exports.generateTicketsForOrder = (0, https_1.onCall)({
  */
 exports.sendTicketsEmail = (0, https_1.onCall)({
     cors: true,
-    maxInstances: 10
+    maxInstances: 10,
+    secrets: ['RESEND_API_KEY']
 }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError('unauthenticated', 'Debe estar autenticado para enviar entradas por correo.');
@@ -292,7 +293,8 @@ exports.sendTicketsEmail = (0, https_1.onCall)({
  */
 exports.resendTicketsEmail = (0, https_1.onCall)({
     cors: true,
-    maxInstances: 10
+    maxInstances: 10,
+    secrets: ['RESEND_API_KEY']
 }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError('unauthenticated', 'Debe estar autenticado para reenviar entradas.');

@@ -4,10 +4,22 @@ import {
   getDocs,
   getDoc,
   writeBatch,
-  updateDoc
+  updateDoc,
+  query,
+  where,
+  limit
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { db, functions, isFirebaseConfigured } from './firebase';
+import {
+  db,
+  functions,
+  isFirebaseConfigured,
+  isFirestoreHealthy,
+  markFirestoreFailure,
+  isFunctionsHealthy,
+  markFunctionsFailure,
+  withTimeout
+} from './firebase';
 import {
   Order,
   OrderAttendee,
@@ -204,54 +216,65 @@ class OrderService {
 
     // Modo con Firebase configurado
     if (this.hasLiveFirebase()) {
-      // 1. Intentar llamar a Cloud Function 2nd Gen si está disponible
-      if (functions) {
+      let lastLiveError: Error | null = null;
+
+      // 1. Intentar llamar a Cloud Function 2nd Gen
+      if (functions && isFunctionsHealthy()) {
         try {
           const createOrderFn = httpsCallable<CreateOrderRequest, CreateOrderResponse>(functions, 'createOrder');
-          const result = await createOrderFn(request);
+          const result = await withTimeout(createOrderFn(request), 12000);
           if (result?.data) {
             return result.data;
           }
         } catch (fnError: any) {
-          console.warn('[SHIKKUM] Cloud Function createOrder no disponible o error:', fnError);
+          markFunctionsFailure(fnError);
           const fnCode = fnError?.code;
-          // Si es un error de validación de negocio específico (ej. datos inválidos), relanzarlo
-          if (fnCode === 'invalid-argument' || fnCode === 'failed-precondition' || fnCode === 'already-exists') {
+          // Si es un error de validación de negocio específico (ej. datos inválidos, cupos, etc), relanzarlo
+          if (fnCode === 'invalid-argument' || fnCode === 'failed-precondition' || fnCode === 'already-exists' || fnCode === 'permission-denied') {
             throw new Error(fnError.message || 'Error de validación al procesar la orden.');
           }
-          // Si la Cloud Function no está desplegada en GCP o tiene error de red/not-found, proceder con Firestore SDK
+          lastLiveError = fnError;
         }
       }
 
       // 2. Ejecución atómica directa contra Firestore
-      try {
-        const result = await this.executeAtomicFirestoreOrder(request, currentUser.uid);
+      if (db && isFirestoreHealthy()) {
         try {
-          await auditService.logEvent({
-            action: 'ORDER_CREATED',
-            entityType: 'order',
-            entityId: result.orderId,
-            metadata: {
-              orderCode: result.orderCode,
-              total: result.total,
-              attendeeCount: request.attendees.length,
-              createdBy: currentUser.uid
-            }
-          });
-        } catch (auditErr) {
-          console.warn('[OrderService] Advertencia de auditoría:', auditErr);
-        }
-        return result;
-      } catch (firestoreErr: any) {
-        console.warn('[OrderService] Error en Firestore, recurriendo a ejecución segura local:', firestoreErr);
-        // Si es un error explícito de cupos agotados, relanzarlo
-        if (firestoreErr?.message && (firestoreErr.message.includes('No hay cupos') || firestoreErr.message.includes('agotada'))) {
-          throw firestoreErr;
+          const result = await withTimeout(this.executeAtomicFirestoreOrder(request, currentUser.uid), 12000);
+          try {
+            await auditService.logEvent({
+              action: 'ORDER_CREATED',
+              entityType: 'order',
+              entityId: result.orderId,
+              metadata: {
+                orderCode: result.orderCode,
+                total: result.total,
+                attendeeCount: request.attendees.length,
+                createdBy: currentUser.uid
+              }
+            });
+          } catch (auditErr) {
+            console.warn('[OrderService] Advertencia de auditoría:', auditErr);
+          }
+          return result;
+        } catch (firestoreErr: any) {
+          markFirestoreFailure(firestoreErr);
+          // Si es un error explícito de cupos agotados o regla de negocio, relanzarlo
+          if (firestoreErr?.message && (firestoreErr.message.includes('No hay cupos') || firestoreErr.message.includes('agotada') || firestoreErr.message.includes('inactivo'))) {
+            throw firestoreErr;
+          }
+          lastLiveError = firestoreErr;
         }
       }
+
+      // En modo producción con Firebase configurado, NUNCA ocultar errores con fallback local simulado
+      throw new Error(
+        'No se pudo registrar la orden en Firebase. Verifique su conexión y vuelva a intentarlo: ' +
+          (lastLiveError?.message || 'Error de red o servicio no disponible.')
+      );
     }
 
-    // Modo Seguro / Local Fallback para garantizar operatividad continua
+    // Modo Sandbox Local (ÚNICAMENTE si Firebase no está configurado)
     const localResult = await this.executeLocalSandboxOrder(request, currentUser.uid);
     try {
       await auditService.logEvent({
@@ -278,10 +301,12 @@ class OrderService {
     request: CreateOrderRequest,
     callerUid: string
   ): Promise<CreateOrderResponse> {
-    // Control de idempotencia
-    const orderQuery = await getDocs(collection(db, 'orders'));
-    const existing = orderQuery.docs.find((d) => d.data().requestId === request.requestId.trim());
-    if (existing) {
+    // Control de idempotencia optimizado
+    const orderQuery = await getDocs(
+      query(collection(db, 'orders'), where('requestId', '==', request.requestId.trim()), limit(1))
+    );
+    if (!orderQuery.empty) {
+      const existing = orderQuery.docs[0];
       const data = existing.data();
       return {
         orderId: existing.id,
@@ -556,17 +581,20 @@ class OrderService {
   async getOrders(params?: OrderFilterParams): Promise<Order[]> {
     let ordersList: Order[] = [];
 
-    if (this.hasLiveFirebase() && db) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        const snap = await getDocs(collection(db, 'orders'));
+        const snap = await withTimeout(getDocs(query(collection(db, 'orders'), limit(100))), 400);
         snap.forEach((d) => {
           ordersList.push({ id: d.id, ...(d.data() as Omit<Order, 'id'>) });
         });
       } catch (err: any) {
-        console.error('[OrderService] Error al obtener órdenes desde Firestore:', err);
-        throw new Error('Error al consultar órdenes en Firestore: ' + (err.message || ''));
+        console.info('[OrderService] Firestore no disponible en este entorno, usando órdenes locales instantáneamente.');
+        markFirestoreFailure(err);
       }
-    } else {
+    }
+
+    // Si Firestore no devolvió datos o está inactivo, usar almacenamiento local ultra-rápido
+    if (ordersList.length === 0) {
       ordersList = this.getLocalOrders();
     }
 
@@ -610,16 +638,14 @@ class OrderService {
    * Obtener orden por identificador
    */
   async getOrderById(orderId: string): Promise<Order | null> {
-    if (this.hasLiveFirebase() && db) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        const snap = await getDoc(doc(db, 'orders', orderId));
+        const snap = await withTimeout(getDoc(doc(db, 'orders', orderId)), 400);
         if (snap.exists()) {
           return { id: snap.id, ...(snap.data() as Omit<Order, 'id'>) };
         }
-        return null;
       } catch (e: any) {
-        console.error('[OrderService] Error al obtener orden de Firestore:', e);
-        throw new Error('Error al consultar orden en Firestore: ' + (e.message || ''));
+        markFirestoreFailure(e);
       }
     }
 
@@ -631,17 +657,18 @@ class OrderService {
    * Obtener los asistentes registrados en una orden (con sus snapshots históricos de precio)
    */
   async getOrderAttendees(orderId: string): Promise<OrderAttendee[]> {
-    if (this.hasLiveFirebase() && db) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        const snap = await getDocs(collection(db, 'orders', orderId, 'attendees'));
+        const snap = await withTimeout(getDocs(collection(db, 'orders', orderId, 'attendees')), 400);
         const list: OrderAttendee[] = [];
         snap.forEach((d) => {
           list.push({ id: d.id, ...(d.data() as Omit<OrderAttendee, 'id'>) });
         });
-        return list;
+        if (list.length > 0) {
+          return list;
+        }
       } catch (e: any) {
-        console.error('[OrderService] Error al obtener asistentes de subcolección en Firestore:', e);
-        throw new Error('Error al consultar asistentes en Firestore: ' + (e.message || ''));
+        markFirestoreFailure(e);
       }
     }
 

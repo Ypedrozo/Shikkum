@@ -6,11 +6,22 @@ import {
   setDoc,
   updateDoc,
   query,
-  where
+  where,
+  limit
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, functions, storage, isFirebaseConfigured } from './firebase';
+import {
+  db,
+  functions,
+  storage,
+  isFirebaseConfigured,
+  isFirestoreHealthy,
+  markFirestoreFailure,
+  isFunctionsHealthy,
+  markFunctionsFailure,
+  withTimeout
+} from './firebase';
 import {
   Payment,
   RegisterPaymentRequest,
@@ -226,28 +237,31 @@ class PaymentService {
       throw new Error('El comprobante es obligatorio para transferencia.');
     }
 
-    // 1. Intentar llamar a Cloud Function 2nd Gen registerPayment
-    if (functions) {
+    // 1. Intentar llamar a Cloud Function 2nd Gen registerPayment si está disponible
+    if (functions && isFunctionsHealthy()) {
       try {
         const registerPaymentFn = httpsCallable<any, any>(functions, 'registerPayment');
-        const result = await registerPaymentFn({
-          orderId,
-          amount,
-          method,
-          reference: reference?.trim(),
-          proofStoragePath,
-          proofUrl,
-          notes: notes?.trim(),
-          autoConfirm: Boolean(autoConfirm)
-        });
+        const result = await withTimeout(
+          registerPaymentFn({
+            orderId,
+            amount,
+            method,
+            reference: reference?.trim(),
+            proofStoragePath,
+            proofUrl,
+            notes: notes?.trim(),
+            autoConfirm: Boolean(autoConfirm)
+          }),
+          12000
+        );
 
-        if (result.data && result.data.success) {
+        if (result?.data && result.data.success) {
           // Recuperar el pago creado
           const createdPayment = await this.getPaymentById(result.data.paymentId);
           if (createdPayment) return createdPayment;
         }
       } catch (fnError: any) {
-        console.warn('[SHIKKUM] Falló invocación de Cloud Function registerPayment:', fnError);
+        markFunctionsFailure(fnError);
         const code = fnError?.code;
         const msg = fnError?.message || '';
 
@@ -255,7 +269,9 @@ class PaymentService {
           throw new Error(msg || 'Error de validación en el registro del pago.');
         }
 
-        console.warn('[PaymentService] Cloud Function no disponible o no desplegada, procediendo con registro directo en Firestore/local.');
+        if (this.hasLiveFirebase()) {
+          throw new Error('No se pudo registrar el pago en Firebase: ' + (msg || 'Error de comunicación.'));
+        }
       }
     }
 
@@ -340,37 +356,38 @@ class PaymentService {
       newPayment.verifiedAt = nowIso;
     }
 
-    if (this.hasLiveFirebase() && db) {
+    // Persistencia local inmediata para respuesta instantánea de interfaz
+    const localPayments = this.getLocalPayments();
+    localPayments.unshift(newPayment);
+    this.saveLocalPayments(localPayments);
+
+    if (isAutoConfirmed) {
+      const orders = orderService['getLocalOrders']();
+      const oIdx = orders.findIndex((o) => o.id === order.id);
+      if (oIdx !== -1) {
+        orders[oIdx] = {
+          ...orders[oIdx],
+          status: 'PAID',
+          updatedAt: nowIso
+        };
+        orderService['saveLocalOrders'](orders);
+      }
+    }
+
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        await setDoc(doc(db, 'payments', paymentId), newPayment);
+        await withTimeout(setDoc(doc(db, 'payments', paymentId), newPayment), 1000);
         if (isAutoConfirmed) {
-          await updateDoc(doc(db, 'orders', order.id), {
-            status: 'PAID',
-            updatedAt: nowIso
-          });
+          await withTimeout(
+            updateDoc(doc(db, 'orders', order.id), {
+              status: 'PAID',
+              updatedAt: nowIso
+            }),
+            1000
+          );
         }
       } catch (err: any) {
-        console.error('[PaymentService] Error al escribir pago en Firestore:', err);
-        throw new Error('Error al registrar pago en Firestore: ' + (err.message || 'Error de conexión'));
-      }
-    } else {
-      // Guardar en almacenamiento local únicamente en modo sandbox
-      const localPayments = this.getLocalPayments();
-      localPayments.unshift(newPayment);
-      this.saveLocalPayments(localPayments);
-
-      // Si fue auto-confirmado, actualizar orden localmente también
-      if (isAutoConfirmed) {
-        const orders = orderService['getLocalOrders']();
-        const oIdx = orders.findIndex((o) => o.id === order.id);
-        if (oIdx !== -1) {
-          orders[oIdx] = {
-            ...orders[oIdx],
-            status: 'PAID',
-            updatedAt: nowIso
-          };
-          orderService['saveLocalOrders'](orders);
-        }
+        markFirestoreFailure(err);
       }
     }
 
@@ -448,30 +465,36 @@ class PaymentService {
       throw new Error('No se encontró el pago.');
     }
 
-    // 1. Intentar llamar a Cloud Function confirmPayment
-    if (functions) {
+    // 1. Intentar llamar a Cloud Function confirmPayment si está disponible
+    if (functions && isFunctionsHealthy()) {
       try {
         const confirmPaymentFn = httpsCallable<any, any>(functions, 'confirmPayment');
-        const result = await confirmPaymentFn({ paymentId });
-        if (result.data && result.data.success) {
+        const result = await withTimeout(confirmPaymentFn({ paymentId }), 12000);
+        if (result?.data && result.data.success) {
           // Reflejar cambio en cache local
           await this.syncLocalPaymentConfirmed(paymentId, currentUser);
           return result.data;
         }
       } catch (fnError: any) {
-        console.warn('[SHIKKUM] Falló invocación de Cloud Function confirmPayment:', fnError);
+        markFunctionsFailure(fnError);
         const code = fnError?.code;
         const msg = fnError?.message || '';
 
-        if (code === 'unauthenticated' || code === 'permission-denied' || code === 'failed-precondition' || code === 'invalid-argument') {
+        if (code === 'unauthenticated' || code === 'permission-denied' || code === 'failed-precondition' || code === 'invalid-argument' || code === 'not-found') {
           throw new Error(msg || 'Error al confirmar el pago.');
         }
 
-        console.warn('[PaymentService] Cloud Function confirmPayment no disponible, procediendo con confirmación directa en Firestore/local.');
+        if (this.hasLiveFirebase()) {
+          throw new Error('No se pudo confirmar el pago en Firebase. Intente nuevamente: ' + (msg || 'Error de comunicación.'));
+        }
       }
     }
 
-    // 2. Ejecución en Sandbox Local con estricta validación e idempotencia
+    if (this.hasLiveFirebase()) {
+      throw new Error('El servicio de confirmación de pagos de Firebase no se encuentra disponible.');
+    }
+
+    // 2. Ejecución en Sandbox Local con estricta validación e idempotencia (Solo cuando Firebase no está activo)
     return this.executeLocalPaymentConfirmation(paymentId, currentUser);
   }
 
@@ -533,31 +556,35 @@ class PaymentService {
 
     const nowIso = new Date().toISOString();
 
-    if (this.hasLiveFirebase() && db) {
+    // Actualizar localmente de forma inmediata
+    await this.syncLocalPaymentConfirmed(paymentId, currentUser, nowIso);
+
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const paymentRef = doc(db, 'payments', paymentId);
         const orderRef = doc(db, 'orders', payment.orderId);
-        await updateDoc(paymentRef, {
-          status: 'CONFIRMED',
-          confirmedBy: currentUser.uid,
-          confirmedByName: currentUser.displayName || 'Operador Cobranzas',
-          confirmedAt: nowIso,
-          verifiedBy: currentUser.uid,
-          verifiedByName: currentUser.displayName || 'Operador Cobranzas',
-          verifiedAt: nowIso,
-          updatedAt: nowIso
-        });
-        await updateDoc(orderRef, {
-          status: 'PAID',
-          updatedAt: nowIso
-        });
+        await withTimeout(
+          Promise.all([
+            updateDoc(paymentRef, {
+              status: 'CONFIRMED',
+              confirmedBy: currentUser.uid,
+              confirmedByName: currentUser.displayName || 'Operador Cobranzas',
+              confirmedAt: nowIso,
+              verifiedBy: currentUser.uid,
+              verifiedByName: currentUser.displayName || 'Operador Cobranzas',
+              verifiedAt: nowIso,
+              updatedAt: nowIso
+            }),
+            updateDoc(orderRef, {
+              status: 'PAID',
+              updatedAt: nowIso
+            })
+          ]),
+          1000
+        );
       } catch (err: any) {
-        console.error('[PaymentService] Error confirmando pago en Firestore:', err);
-        throw new Error('Error al confirmar pago en Firestore: ' + (err.message || ''));
+        markFirestoreFailure(err);
       }
-    } else {
-      // Actualizar local únicamente en sandbox
-      await this.syncLocalPaymentConfirmed(paymentId, currentUser, nowIso);
     }
 
     // Registrar evento de auditoría
@@ -667,16 +694,17 @@ class PaymentService {
       throw new Error('Debe proporcionar un motivo de rechazo válido (mínimo 3 caracteres).');
     }
 
-    if (functions) {
+    // 1. Intentar llamar a Cloud Function rejectPayment si está disponible
+    if (functions && isFunctionsHealthy()) {
       try {
         const rejectPaymentFn = httpsCallable<any, any>(functions, 'rejectPayment');
-        const result = await rejectPaymentFn({ paymentId, reason: reason.trim() });
-        if (result.data && result.data.success) {
+        const result = await withTimeout(rejectPaymentFn({ paymentId, reason: reason.trim() }), 12000);
+        if (result?.data && result.data.success) {
           this.syncLocalPaymentRejected(paymentId, currentUser, reason.trim());
           return result.data;
         }
       } catch (fnError: any) {
-        console.warn('[SHIKKUM] Falló invocación de Cloud Function rejectPayment:', fnError);
+        markFunctionsFailure(fnError);
         const code = fnError?.code;
         const msg = fnError?.message || '';
 
@@ -684,8 +712,14 @@ class PaymentService {
           throw new Error(msg || 'Error al rechazar el pago.');
         }
 
-        console.warn('[PaymentService] Cloud Function rejectPayment no disponible, procediendo con rechazo directo en Firestore/local.');
+        if (this.hasLiveFirebase()) {
+          throw new Error('No se pudo procesar el rechazo del pago en Firebase: ' + (msg || 'Error de comunicación.'));
+        }
       }
+    }
+
+    if (this.hasLiveFirebase()) {
+      throw new Error('El servicio de rechazo de pagos de Firebase no se encuentra disponible.');
     }
 
     return this.executeLocalPaymentRejection(paymentId, currentUser, reason.trim());
@@ -716,23 +750,26 @@ class PaymentService {
 
     const nowIso = new Date().toISOString();
 
-    if (this.hasLiveFirebase() && db) {
+    // Actualizar localmente de inmediato
+    this.syncLocalPaymentRejected(paymentId, currentUser, reason, nowIso);
+
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const paymentRef = doc(db, 'payments', paymentId);
-        await updateDoc(paymentRef, {
-          status: 'REJECTED',
-          rejectionReason: reason,
-          rejectedBy: currentUser.uid,
-          rejectedByName: currentUser.displayName || 'Operador',
-          rejectedAt: nowIso,
-          updatedAt: nowIso
-        });
+        await withTimeout(
+          updateDoc(paymentRef, {
+            status: 'REJECTED',
+            rejectionReason: reason,
+            rejectedBy: currentUser.uid,
+            rejectedByName: currentUser.displayName || 'Operador',
+            rejectedAt: nowIso,
+            updatedAt: nowIso
+          }),
+          1000
+        );
       } catch (err: any) {
-        console.error('[PaymentService] Error al rechazar en Firestore:', err);
-        throw new Error('Error al registrar rechazo de pago en Firestore: ' + (err.message || ''));
+        markFirestoreFailure(err);
       }
-    } else {
-      this.syncLocalPaymentRejected(paymentId, currentUser, reason, nowIso);
     }
 
     try {
@@ -788,17 +825,21 @@ class PaymentService {
   async getPayments(filters?: PaymentFilterParams): Promise<Payment[]> {
     let payments: Payment[] = [];
 
-    if (this.hasLiveFirebase() && db) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        const snap = await getDocs(collection(db, 'payments'));
-        snap.forEach((d) => {
-          payments.push({ id: d.id, paymentId: d.id, ...(d.data() as Omit<Payment, 'id'>) });
-        });
+        const q = query(collection(db, 'payments'), limit(100));
+        const snap = await withTimeout(getDocs(q), 800);
+        if (!snap.empty) {
+          snap.forEach((d) => {
+            payments.push({ id: d.id, paymentId: d.id, ...(d.data() as Omit<Payment, 'id'>) });
+          });
+        }
       } catch (err: any) {
-        console.error('[PaymentService] Error al consultar /payments en Firestore:', err);
-        throw new Error('Error al consultar pagos en Firestore: ' + (err.message || ''));
+        markFirestoreFailure(err);
       }
-    } else {
+    }
+
+    if (payments.length === 0) {
       payments = this.getLocalPayments();
     }
 
@@ -811,12 +852,21 @@ class PaymentService {
       if (filters.method && filters.method !== ('ALL' as any) && p.method !== filters.method) {
         return false;
       }
+      if (filters.startDate && p.registeredAt) {
+        if (new Date(p.registeredAt) < new Date(filters.startDate)) return false;
+      }
+      if (filters.endDate && p.registeredAt) {
+        const endDay = new Date(filters.endDate);
+        endDay.setHours(23, 59, 59, 999);
+        if (new Date(p.registeredAt) > endDay) return false;
+      }
       if (filters.searchTerm && filters.searchTerm.trim()) {
         const term = filters.searchTerm.toLowerCase().trim();
         const matchesCode = p.orderCode.toLowerCase().includes(term);
         const matchesRef = p.reference ? p.reference.toLowerCase().includes(term) : false;
         const matchesReg = p.registeredByName ? p.registeredByName.toLowerCase().includes(term) : false;
-        if (!matchesCode && !matchesRef && !matchesReg) return false;
+        const matchesConf = p.confirmedByName ? p.confirmedByName.toLowerCase().includes(term) : false;
+        if (!matchesCode && !matchesRef && !matchesReg && !matchesConf) return false;
       }
       return true;
     });
@@ -826,18 +876,17 @@ class PaymentService {
    * Obtener todos los pagos vinculados a una orden
    */
   async getPaymentsByOrderId(orderId: string): Promise<Payment[]> {
-    if (this.hasLiveFirebase() && db) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const q = query(collection(db, 'payments'), where('orderId', '==', orderId));
-        const snap = await getDocs(q);
+        const snap = await withTimeout(getDocs(q), 800);
         const list: Payment[] = [];
         snap.forEach((d) => {
           list.push({ id: d.id, paymentId: d.id, ...(d.data() as Omit<Payment, 'id'>) });
         });
-        return list;
+        if (list.length > 0) return list;
       } catch (err: any) {
-        console.error('[PaymentService] Error al consultar pagos por orderId en Firestore:', err);
-        throw new Error('Error al consultar pagos de la orden en Firestore: ' + (err.message || ''));
+        markFirestoreFailure(err);
       }
     }
 
@@ -866,16 +915,14 @@ class PaymentService {
    * Obtener pago por ID
    */
   async getPaymentById(paymentId: string): Promise<Payment | null> {
-    if (this.hasLiveFirebase() && db) {
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        const snap = await getDoc(doc(db, 'payments', paymentId));
+        const snap = await withTimeout(getDoc(doc(db, 'payments', paymentId)), 800);
         if (snap.exists()) {
           return { id: snap.id, paymentId: snap.id, ...(snap.data() as Omit<Payment, 'id'>) };
         }
-        return null;
       } catch (err: any) {
-        console.error('[PaymentService] Error al obtener pago en Firestore:', err);
-        throw new Error('Error al obtener pago en Firestore: ' + (err.message || ''));
+        markFirestoreFailure(err);
       }
     }
 

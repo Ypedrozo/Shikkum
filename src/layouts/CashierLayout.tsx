@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
+import { OperationalStatusBar, OperationalModeBadge } from '../components/OperationalStatusBar';
 import { LogOut, User as UserIcon, LayoutDashboard, Users, ShoppingBag, Plus, Ticket } from 'lucide-react';
 
 interface LayoutProps {
@@ -13,6 +14,7 @@ export const CashierLayout: React.FC<LayoutProps> = ({ children, currentPath, on
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+      <OperationalStatusBar />
       {/* Top Bar */}
       <header className="sticky top-0 z-40 bg-slate-900/95 backdrop-blur border-b border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -34,6 +36,7 @@ export const CashierLayout: React.FC<LayoutProps> = ({ children, currentPath, on
                 <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full uppercase">
                   Cobranzas
                 </span>
+                <OperationalModeBadge />
               </div>
               <p className="text-xs text-slate-400">Punto de Venta y Gestión de Pagos</p>
             </div>

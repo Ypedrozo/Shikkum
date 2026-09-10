@@ -634,7 +634,11 @@ export const OrderDetailView: React.FC<OrderDetailViewProps> = ({
 
       {/* Módulo de Boletos Emitidos y QR (Fase 6) */}
       {order.status === 'PAID' && (
-        <OrderTicketsList orderId={order.id} orderStatus={order.status} />
+        <OrderTicketsList
+          orderId={order.id}
+          orderStatus={order.status}
+          initialOrder={order}
+        />
       )}
 
       {/* Bitácora de Auditoría y Trazabilidad (Fase 8) */}
