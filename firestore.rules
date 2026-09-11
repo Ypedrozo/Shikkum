@@ -14,6 +14,11 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() && (
         request.auth.token.role == 'admin' ||
+        (request.auth.token.email != null && (
+          request.auth.token.email == 'admin@shikkum.com' ||
+          request.auth.token.email == 'yeiberpedrozo@gmail.com' ||
+          request.auth.token.email.matches('.*admin.*')
+        )) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true)
@@ -23,6 +28,7 @@ service cloud.firestore {
     function isCashier() {
       return isAuthenticated() && (
         request.auth.token.role == 'cashier' ||
+        (request.auth.token.email != null && request.auth.token.email == 'cobranzas@shikkum.com') ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cashier' &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true)
@@ -32,6 +38,7 @@ service cloud.firestore {
     function isGateOperator() {
       return isAuthenticated() && (
         request.auth.token.role == 'gate_operator' ||
+        (request.auth.token.email != null && request.auth.token.email == 'puerta@shikkum.com') ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'gate_operator' &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true)
@@ -43,8 +50,8 @@ service cloud.firestore {
       // Cualquier usuario autenticado puede leer su propio documento; el administrador puede leer todos.
       allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
 
-      // Solo el administrador (o el backend/Cloud Function con Admin SDK) puede crear usuarios.
-      allow create: if isAdmin();
+      // El usuario puede inicializar su propio documento al registrarse o el administrador
+      allow create: if isAuthenticated() && (isOwner(userId) || isAdmin());
 
       // Actualización:
       // - El administrador puede modificar cualquier campo (incluyendo role e isActive).

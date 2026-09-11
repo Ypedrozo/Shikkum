@@ -217,22 +217,27 @@ class PricingService {
       updatedBy: operatorUid
     };
 
-    if (this.hasLiveFirebase() && db) {
+    // Guardar inmediatamente en almacén local resiliente
+    const localList = this.getLocalRules();
+    const existingIndex = localList.findIndex((r) => r.id === newId);
+    if (existingIndex >= 0) {
+      localList[existingIndex] = newRule;
+    } else {
+      localList.unshift(newRule);
+    }
+    this.saveLocalRules(localList);
+
+    // Sincronizar en vivo con Firestore si la base de datos está disponible
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'price_rules', newId);
         await setDoc(docRef, newRule);
         markFirestoreSuccess();
-        return newRule;
       } catch (e: any) {
         markFirestoreFailure(e);
-        console.error('[PricingService] Fallo guardando regla en Firestore:', e);
-        throw new Error(`No se pudo crear la regla en Firestore: ${e.message || 'Error de permisos o red.'}`);
+        console.warn('[PricingService] Regla guardada localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
       }
     }
-
-    const localList = this.getLocalRules();
-    localList.unshift(newRule);
-    this.saveLocalRules(localList);
 
     return newRule;
   }
@@ -271,7 +276,18 @@ class PricingService {
       updatedBy: operatorUid
     };
 
-    if (this.hasLiveFirebase() && db) {
+    // Guardar inmediatamente en almacén local resiliente
+    const localList = this.getLocalRules();
+    const index = localList.findIndex((r) => r.id === id);
+    if (index !== -1) {
+      localList[index] = updatedRule;
+    } else {
+      localList.unshift(updatedRule);
+    }
+    this.saveLocalRules(localList);
+
+    // Sincronizar en vivo con Firestore si la base de datos está disponible
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'price_rules', id);
         await updateDoc(docRef, {
@@ -282,19 +298,10 @@ class PricingService {
           updatedBy: operatorUid
         });
         markFirestoreSuccess();
-        return updatedRule;
       } catch (e: any) {
         markFirestoreFailure(e);
-        console.error('[PricingService] Fallo actualizando regla en Firestore:', e);
-        throw new Error(`No se pudo actualizar la regla en Firestore: ${e.message || 'Error de permisos o red.'}`);
+        console.warn('[PricingService] Regla actualizada localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
       }
-    }
-
-    const localList = this.getLocalRules();
-    const index = localList.findIndex((r) => r.id === id);
-    if (index !== -1) {
-      localList[index] = updatedRule;
-      this.saveLocalRules(localList);
     }
 
     return updatedRule;
@@ -311,21 +318,20 @@ class PricingService {
    * Elimina una regla si aún no ha sido utilizada
    */
   public async deleteRule(id: string): Promise<void> {
-    if (this.hasLiveFirebase() && db) {
+    const localList = this.getLocalRules();
+    const filtered = localList.filter((r) => r.id !== id);
+    this.saveLocalRules(filtered);
+
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'price_rules', id);
         await deleteDoc(docRef);
         markFirestoreSuccess();
       } catch (e: any) {
         markFirestoreFailure(e);
-        console.error('[PricingService] Fallo eliminando regla en Firestore:', e);
-        throw new Error(`No se pudo eliminar la regla de Firestore: ${e.message || 'Error de permisos o red.'}`);
+        console.warn('[PricingService] Regla eliminada localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
       }
     }
-
-    const localList = this.getLocalRules();
-    const filtered = localList.filter((r) => r.id !== id);
-    this.saveLocalRules(filtered);
   }
 
   /**

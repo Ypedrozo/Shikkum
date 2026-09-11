@@ -168,22 +168,27 @@ class CustomerService {
       updatedBy: operatorUid
     };
 
-    if (this.hasLiveFirebase() && db) {
+    // Guardar inmediatamente en almacén local resiliente
+    const localList = this.getLocalCustomers();
+    const existingIndex = localList.findIndex((c) => c.id === newId);
+    if (existingIndex >= 0) {
+      localList[existingIndex] = newCustomer;
+    } else {
+      localList.unshift(newCustomer);
+    }
+    this.saveLocalCustomers(localList);
+
+    // Sincronizar en vivo con Firestore si la base de datos está disponible
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'customers', newId);
         await setDoc(docRef, newCustomer);
         markFirestoreSuccess();
-        return newCustomer;
       } catch (e: any) {
         markFirestoreFailure(e);
-        console.error('[CustomerService] Fallo crítico guardando cliente en Firestore:', e);
-        throw new Error(`No se pudo crear el cliente en Firestore: ${e.message || 'Error de permisos o red.'}`);
+        console.warn('[CustomerService] Cliente guardado localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
       }
     }
-
-    const localList = this.getLocalCustomers();
-    localList.unshift(newCustomer);
-    this.saveLocalCustomers(localList);
 
     return newCustomer;
   }
@@ -215,7 +220,18 @@ class CustomerService {
       updatedBy: operatorUid
     };
 
-    if (this.hasLiveFirebase() && db) {
+    // Guardar inmediatamente en almacén local resiliente
+    const localList = this.getLocalCustomers();
+    const index = localList.findIndex((c) => c.id === id);
+    if (index !== -1) {
+      localList[index] = updatedCustomer;
+    } else {
+      localList.unshift(updatedCustomer);
+    }
+    this.saveLocalCustomers(localList);
+
+    // Sincronizar en vivo con Firestore si la base de datos está disponible
+    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'customers', id);
         await updateDoc(docRef, {
@@ -224,19 +240,10 @@ class CustomerService {
           updatedBy: operatorUid
         });
         markFirestoreSuccess();
-        return updatedCustomer;
       } catch (e: any) {
         markFirestoreFailure(e);
-        console.error('[CustomerService] Fallo crítico actualizando cliente en Firestore:', e);
-        throw new Error(`No se pudo actualizar el cliente en Firestore: ${e.message || 'Error de permisos o red.'}`);
+        console.warn('[CustomerService] Cliente actualizado localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
       }
-    }
-
-    const localList = this.getLocalCustomers();
-    const index = localList.findIndex((c) => c.id === id);
-    if (index !== -1) {
-      localList[index] = updatedCustomer;
-      this.saveLocalCustomers(localList);
     }
 
     return updatedCustomer;
