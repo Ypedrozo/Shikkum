@@ -14,6 +14,7 @@ import {
   functions,
   isFirebaseConfigured,
   isFirestoreHealthy,
+  markFirestoreSuccess,
   markFirestoreFailure,
   isFunctionsHealthy,
   markFunctionsFailure,
@@ -49,88 +50,6 @@ function generateSecureId(prefix: string): string {
   return `${prefix}_${Date.now()}_${generateSecureRandomHex(4)}`;
 }
 
-// Semillas iniciales para demostración y pruebas en sandbox local
-const INITIAL_DEMO_TICKETS: Ticket[] = [
-  {
-    id: 'tkt_ord_demo_001_att_demo_001',
-    ticketCode: 'TKT-2026-DEMO01-01',
-    qrToken: 'a4f9b8c2e1d7408f9c3e2a1b5d6f7e8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e',
-    status: 'ISSUED',
-    orderId: 'ord_demo_001',
-    attendeeId: 'att_demo_001',
-    eventId: 'evt_demo_001',
-    customerId: 'cust_demo_001',
-    attendeeSnapshot: {
-      fullName: 'Roberto Gómez',
-      documentId: 'V-19882341',
-      email: 'roberto.gomez@demo.com',
-      ticketType: 'General',
-      priceRuleName: 'Adulto General (Miembro Comunidad)',
-      unitPrice: 35
-    },
-    eventSnapshot: {
-      title: 'Conferencia Anual de Tecnología 2026',
-      startDate: '2026-10-15T09:00:00.000Z',
-      location: 'Centro de Convenciones Metropolitano'
-    },
-    orderSnapshot: {
-      orderCode: 'SHK-2026-DEMO01',
-      currency: 'USD',
-      total: 55
-    },
-    issuedAt: '2026-09-02T14:35:00.000Z',
-    issuedBy: 'usr_cashier_01',
-    issuedByName: 'Carlos Cobranzas',
-    createdAt: '2026-09-02T14:35:00.000Z',
-    updatedAt: '2026-09-02T14:35:00.000Z',
-    emailDelivery: {
-      status: 'SENT',
-      recipient: 'roberto.gomez@demo.com',
-      sentAt: '2026-09-02T14:35:05.000Z',
-      resendCount: 0
-    }
-  },
-  {
-    id: 'tkt_ord_demo_001_att_demo_002',
-    ticketCode: 'TKT-2026-DEMO01-02',
-    qrToken: 'e7c1d3f5b9a2468e0d1f3b5a7c9e2d4f6a8b0c2e4d6f8a0b2c4d6e8f0a2b4c6d',
-    status: 'ISSUED',
-    orderId: 'ord_demo_001',
-    attendeeId: 'att_demo_002',
-    eventId: 'evt_demo_001',
-    customerId: 'cust_demo_001',
-    attendeeSnapshot: {
-      fullName: 'Mateo Gómez (Hijo)',
-      documentId: 'V-31445123',
-      email: 'roberto.gomez@demo.com',
-      ticketType: 'Infantil',
-      priceRuleName: 'Infantil / Menor de Edad',
-      unitPrice: 20
-    },
-    eventSnapshot: {
-      title: 'Conferencia Anual de Tecnología 2026',
-      startDate: '2026-10-15T09:00:00.000Z',
-      location: 'Centro de Convenciones Metropolitano'
-    },
-    orderSnapshot: {
-      orderCode: 'SHK-2026-DEMO01',
-      currency: 'USD',
-      total: 55
-    },
-    issuedAt: '2026-09-02T14:35:00.000Z',
-    issuedBy: 'usr_cashier_01',
-    issuedByName: 'Carlos Cobranzas',
-    createdAt: '2026-09-02T14:35:00.000Z',
-    updatedAt: '2026-09-02T14:35:00.000Z',
-    emailDelivery: {
-      status: 'SENT',
-      recipient: 'roberto.gomez@demo.com',
-      sentAt: '2026-09-02T14:35:05.000Z',
-      resendCount: 0
-    }
-  }
-];
-
 class TicketService {
   private static inFlightRedemptions = new Set<string>();
 
@@ -163,13 +82,12 @@ class TicketService {
     if (isFirebaseConfigured && db && isFirestoreHealthy()) {
       try {
         const q = query(collection(db, 'tickets'), where('orderId', '==', orderId));
-        const snapshot = await withTimeout(getDocs(q), 800);
+        const snapshot = await withTimeout(getDocs(q), 3500, 'Consulta de boletos excedió el tiempo límite.');
         const tickets: Ticket[] = [];
         snapshot.forEach((d) => tickets.push(d.data() as Ticket));
-        if (tickets.length > 0) {
-          tickets.sort((a, b) => a.ticketCode.localeCompare(b.ticketCode));
-          return tickets;
-        }
+        markFirestoreSuccess();
+        tickets.sort((a, b) => a.ticketCode.localeCompare(b.ticketCode));
+        return tickets;
       } catch (err: any) {
         markFirestoreFailure(err);
       }
@@ -187,10 +105,12 @@ class TicketService {
   async getTicketById(ticketId: string): Promise<Ticket | null> {
     if (isFirebaseConfigured && db && isFirestoreHealthy()) {
       try {
-        const snap = await withTimeout(getDoc(doc(db, 'tickets', ticketId)), 800);
+        const snap = await withTimeout(getDoc(doc(db, 'tickets', ticketId)), 3500, 'Consulta de boleto excedió el tiempo límite.');
         if (snap.exists()) {
+          markFirestoreSuccess();
           return snap.data() as Ticket;
         }
+        return null;
       } catch (err: any) {
         markFirestoreFailure(err);
       }
@@ -214,16 +134,16 @@ class TicketService {
     if (isFirebaseConfigured && db && isFirestoreHealthy()) {
       try {
         const q = filter?.eventId
-          ? query(collection(db, 'tickets'), where('eventId', '==', filter.eventId), limit(150))
-          : query(collection(db, 'tickets'), limit(150));
-        const snapshot = await withTimeout(getDocs(q), 800);
+          ? query(collection(db, 'tickets'), where('eventId', '==', filter.eventId), limit(200))
+          : query(collection(db, 'tickets'), limit(200));
+        const snapshot = await withTimeout(getDocs(q), 3500, 'Consulta de boletos excedió el tiempo límite.');
         snapshot.forEach((d) => list.push(d.data() as Ticket));
+        markFirestoreSuccess();
       } catch (err: any) {
         markFirestoreFailure(err);
+        list = this.getLocalTickets();
       }
-    }
-
-    if (list.length === 0) {
+    } else {
       list = this.getLocalTickets();
     }
 
@@ -1091,12 +1011,11 @@ class TicketService {
     try {
       const raw = localStorage.getItem(TICKETS_STORAGE_KEY);
       if (!raw) {
-        localStorage.setItem(TICKETS_STORAGE_KEY, JSON.stringify(INITIAL_DEMO_TICKETS));
-        return [...INITIAL_DEMO_TICKETS];
+        return [];
       }
       return JSON.parse(raw);
     } catch {
-      return [...INITIAL_DEMO_TICKETS];
+      return [];
     }
   }
 

@@ -5,8 +5,8 @@ import {
   User as FirebaseUser,
   onIdTokenChanged
 } from 'firebase/auth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { auth, db, isFirebaseConfigured } from './firebase';
+import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { auth, db, isFirebaseConfigured, isProductionEnvironment } from './firebase';
 import { SystemRole, SystemUser } from '../types';
 
 const SESSION_STORAGE_KEY = 'shikkum_active_session_v2';
@@ -257,9 +257,41 @@ class AuthService {
               await updateDoc(userDocRef, {
                 lastLoginAt: new Date().toISOString()
               }).catch(() => {});
+            } else {
+              // Si el documento en /users/{uid} no existe aún en Firestore, se inicializa
+              const initialRole: SystemRole =
+                claimRole ||
+                (cleanEmail === 'yeiberpedrozo@gmail.com' || cleanEmail.includes('admin')
+                  ? 'admin'
+                  : cleanEmail.includes('gate')
+                  ? 'gate_operator'
+                  : 'cashier');
+              const initialDisplayName =
+                fbUser.displayName ||
+                (cleanEmail === 'yeiberpedrozo@gmail.com'
+                  ? 'Yeiber Pedrozo (Super Administrador)'
+                  : cleanEmail.split('@')[0]);
+
+              const newUserDoc = {
+                uid: fbUser.uid,
+                email: cleanEmail,
+                displayName: initialDisplayName,
+                role: initialRole,
+                isActive: true,
+                createdAt: fbUser.metadata.creationTime || new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                lastLoginAt: new Date().toISOString()
+              };
+
+              await setDoc(userDocRef, newUserDoc).catch((e) => {
+                console.warn('[AuthService] No se pudo crear doc inicial en Firestore:', e);
+              });
+
+              role = initialRole;
+              displayName = initialDisplayName;
             }
-          } catch {
-            // Continuar con claim
+          } catch (err) {
+            console.warn('[AuthService] Advertencia al verificar documento en /users:', err);
           }
         }
 
@@ -289,37 +321,20 @@ class AuthService {
           throw err;
         }
         firebaseAuthError = err;
-        console.warn('[AuthService] Firebase Auth no validó credenciales o usuario no registrado en nube:', err.code || err.message);
+        console.warn('[AuthService] Firebase Auth error al autenticar:', err.code || err.message);
+        // Cuando Firebase está configurado en producción, no se debe enmascarar un fallo de credenciales
+        throw new Error(this.mapAuthError(firebaseAuthError.code || firebaseAuthError.message));
       }
     }
 
-    // 2. Fallback con cuentas del sistema / Administrador / Super Administrador Yeiber Pedrozo
-    // Caso especial: Yeiber Pedrozo (Super Administrador y creador de SHIKKUM)
-    if (cleanEmail === 'yeiberpedrozo@gmail.com') {
-      const isCorrectPass = pass === 'AdminPassword2026!' || pass.trim().length >= 4;
-      if (!isCorrectPass) {
-        throw new Error('Contraseña incorrecta para el usuario administrador.');
+    if (isProductionEnvironment) {
+      if (firebaseAuthError) {
+        throw new Error(this.mapAuthError(firebaseAuthError.code || firebaseAuthError.message));
       }
-
-      const adminUser: SystemUser = {
-        uid: 'usr_yeiber_master_01',
-        email: 'yeiberpedrozo@gmail.com',
-        displayName: 'Yeiber Pedrozo (Super Administrador)',
-        role: 'admin',
-        isActive: true,
-        createdAt: '2026-09-01T10:00:00.000Z',
-        updatedAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString()
-      };
-
-      this.currentUser = adminUser;
-      this.sessionSource = 'local';
-      this.saveLocalSession(adminUser, 'local');
-      this.notifyListeners();
-      return adminUser;
+      throw new Error('La autenticación en producción requiere conexión activa a Firebase.');
     }
 
-    // Cuentas de verificación de roles de SHIKKUM
+    // Si Firebase no está configurado (modo offline local), se permite el fallback de desarrollo
     const devAccount = MOCK_DEV_ACCOUNTS[cleanEmail];
     if (devAccount) {
       if (devAccount.password !== pass) {
@@ -342,7 +357,6 @@ class AuthService {
       return sessionUser;
     }
 
-    // Si no coincide con ninguna cuenta local ni de Firebase Auth
     if (firebaseAuthError) {
       throw new Error(this.mapAuthError(firebaseAuthError.code || firebaseAuthError.message));
     }

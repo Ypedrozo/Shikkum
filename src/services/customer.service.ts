@@ -12,58 +12,13 @@ import {
   db,
   isFirebaseConfigured,
   isFirestoreHealthy,
+  markFirestoreSuccess,
   markFirestoreFailure,
   withTimeout
 } from './firebase';
 import { Customer } from '../types';
 
 const STORAGE_KEY = 'shikkum_customers_store_v1';
-
-// Datos iniciales de prueba claramente identificados como DEMO
-const INITIAL_DEMO_CUSTOMERS: Customer[] = [
-  {
-    id: 'cust_demo_001',
-    fullName: 'Cliente Demo Uno',
-    email: 'cliente.demo@example.com',
-    phone: '+1 555-0192',
-    documentId: 'DEMO-98765432',
-    isCommunityMember: true,
-    isActive: true,
-    notes: 'Registro inicial ficticio para pruebas de aceptación',
-    createdAt: '2026-09-01T10:00:00.000Z',
-    updatedAt: '2026-09-01T10:00:00.000Z',
-    createdBy: 'usr_admin_master_01',
-    updatedBy: 'usr_admin_master_01'
-  },
-  {
-    id: 'cust_demo_002',
-    fullName: 'Cliente Demo Dos (No Miembro)',
-    email: 'cliente.demo2@example.com',
-    phone: '+1 555-0193',
-    documentId: 'DEMO-12345678',
-    isCommunityMember: false,
-    isActive: true,
-    notes: 'Cliente no perteneciente a la comunidad para test de precios',
-    createdAt: '2026-09-02T11:30:00.000Z',
-    updatedAt: '2026-09-02T11:30:00.000Z',
-    createdBy: 'usr_admin_master_01',
-    updatedBy: 'usr_admin_master_01'
-  },
-  {
-    id: 'cust_demo_003',
-    fullName: 'Cliente Demo Inactivo',
-    email: 'cliente.inactivo@example.com',
-    phone: '+1 555-0194',
-    documentId: 'DEMO-44556677',
-    isCommunityMember: true,
-    isActive: false,
-    notes: 'Cliente de demostración desactivado para filtro',
-    createdAt: '2026-09-02T14:00:00.000Z',
-    updatedAt: '2026-09-03T09:15:00.000Z',
-    createdBy: 'usr_admin_master_01',
-    updatedBy: 'usr_admin_master_01'
-  }
-];
 
 class CustomerService {
   private hasLiveFirebase(): boolean {
@@ -74,12 +29,11 @@ class CustomerService {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (!saved) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_DEMO_CUSTOMERS));
-        return INITIAL_DEMO_CUSTOMERS;
+        return [];
       }
       return JSON.parse(saved);
     } catch {
-      return INITIAL_DEMO_CUSTOMERS;
+      return [];
     }
   }
 
@@ -116,20 +70,20 @@ class CustomerService {
   }
 
   /**
-   * Obtiene todos los clientes
+   * Obtiene todos los clientes directamente desde Firestore
    */
   public async getCustomers(): Promise<Customer[]> {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const colRef = collection(db, 'customers');
-        const snap = await withTimeout(getDocs(query(colRef, limit(100))), 500);
+        const snap = await withTimeout(getDocs(query(colRef, limit(200))), 3500, 'Consulta de clientes excedió el límite.');
         const list: Customer[] = [];
         snap.forEach((docSnap) => {
           list.push({ id: docSnap.id, ...docSnap.data() } as Customer);
         });
-        if (list.length > 0) {
-          return list;
-        }
+        markFirestoreSuccess();
+        this.saveLocalCustomers(list);
+        return list;
       } catch (err: any) {
         markFirestoreFailure(err);
       }
@@ -145,10 +99,12 @@ class CustomerService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'customers', id);
-        const snap = await withTimeout(getDoc(docRef), 800);
+        const snap = await withTimeout(getDoc(docRef), 3500, 'Consulta de cliente excedió el límite.');
         if (snap.exists()) {
+          markFirestoreSuccess();
           return { id: snap.id, ...snap.data() } as Customer;
         }
+        return null;
       } catch (err: any) {
         markFirestoreFailure(err);
       }
@@ -183,7 +139,7 @@ class CustomerService {
   }
 
   /**
-   * Crea un nuevo cliente con auditoría
+   * Crea un nuevo cliente con persistencia directa en Firestore
    */
   public async createCustomer(
     payload: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy'>,
@@ -212,12 +168,16 @@ class CustomerService {
       updatedBy: operatorUid
     };
 
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const docRef = doc(db, 'customers', newId);
         await setDoc(docRef, newCustomer);
-      } catch (e) {
-        console.warn('Firestore setDoc customers falló, guardando localmente:', e);
+        markFirestoreSuccess();
+        return newCustomer;
+      } catch (e: any) {
+        markFirestoreFailure(e);
+        console.error('[CustomerService] Fallo crítico guardando cliente en Firestore:', e);
+        throw new Error(`No se pudo crear el cliente en Firestore: ${e.message || 'Error de permisos o red.'}`);
       }
     }
 
@@ -229,7 +189,7 @@ class CustomerService {
   }
 
   /**
-   * Actualiza un cliente existente con auditoría
+   * Actualiza un cliente existente con persistencia directa en Firestore
    */
   public async updateCustomer(
     id: string,
@@ -255,7 +215,7 @@ class CustomerService {
       updatedBy: operatorUid
     };
 
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const docRef = doc(db, 'customers', id);
         await updateDoc(docRef, {
@@ -263,8 +223,12 @@ class CustomerService {
           updatedAt: now,
           updatedBy: operatorUid
         });
-      } catch (e) {
-        console.warn('Firestore updateDoc customers falló, actualizando localmente:', e);
+        markFirestoreSuccess();
+        return updatedCustomer;
+      } catch (e: any) {
+        markFirestoreFailure(e);
+        console.error('[CustomerService] Fallo crítico actualizando cliente en Firestore:', e);
+        throw new Error(`No se pudo actualizar el cliente en Firestore: ${e.message || 'Error de permisos o red.'}`);
       }
     }
 

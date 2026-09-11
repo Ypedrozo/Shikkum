@@ -10,64 +10,13 @@ import {
   db,
   isFirebaseConfigured,
   isFirestoreHealthy,
+  markFirestoreSuccess,
   markFirestoreFailure,
   withTimeout
 } from './firebase';
 import { Event, EventStatus } from '../types';
 
 const STORAGE_KEY = 'shikkum_events_store_v1';
-
-// Datos iniciales de prueba claramente identificados como DEMO
-const INITIAL_DEMO_EVENTS: Event[] = [
-  {
-    id: 'evt_demo_001',
-    title: 'EVENTO DEMO — NO REAL: Gran Gala Shikkum 2026',
-    description: 'Evento de demostración para verificar la gestión de eventos y reglas de precios.',
-    date: '2026-10-15',
-    startTime: '19:00',
-    endTime: '23:30',
-    venue: 'Salón Principal Comunitario',
-    capacity: 250,
-    status: 'ACTIVE',
-    ticketsSold: 0,
-    createdAt: '2026-09-01T12:00:00.000Z',
-    updatedAt: '2026-09-01T12:00:00.000Z',
-    createdBy: 'usr_admin_master_01',
-    updatedBy: 'usr_admin_master_01'
-  },
-  {
-    id: 'evt_demo_002',
-    title: 'EVENTO DEMO — NO REAL: Taller Juvenil de Primavera',
-    description: 'Encuentro juvenil educativo y cultural en borrador.',
-    date: '2026-11-05',
-    startTime: '16:00',
-    endTime: '18:30',
-    venue: 'Centro de Juventud',
-    capacity: 80,
-    status: 'DRAFT',
-    ticketsSold: 0,
-    createdAt: '2026-09-02T14:30:00.000Z',
-    updatedAt: '2026-09-02T14:30:00.000Z',
-    createdBy: 'usr_admin_master_01',
-    updatedBy: 'usr_admin_master_01'
-  },
-  {
-    id: 'evt_demo_003',
-    title: 'EVENTO DEMO — NO REAL: Concierto de Invierno 2025',
-    description: 'Evento histórico cerrado para verificar filtros de estado.',
-    date: '2025-12-20',
-    startTime: '20:00',
-    endTime: '22:00',
-    venue: 'Auditorio Central',
-    capacity: 150,
-    status: 'CLOSED',
-    ticketsSold: 0,
-    createdAt: '2025-11-01T08:00:00.000Z',
-    updatedAt: '2025-12-21T00:00:00.000Z',
-    createdBy: 'usr_admin_master_01',
-    updatedBy: 'usr_admin_master_01'
-  }
-];
 
 class EventService {
   private hasLiveFirebase(): boolean {
@@ -78,12 +27,11 @@ class EventService {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (!saved) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_DEMO_EVENTS));
-        return INITIAL_DEMO_EVENTS;
+        return [];
       }
       return JSON.parse(saved);
     } catch {
-      return INITIAL_DEMO_EVENTS;
+      return [];
     }
   }
 
@@ -122,20 +70,20 @@ class EventService {
   }
 
   /**
-   * Obtiene la lista completa de eventos
+   * Obtiene la lista completa de eventos directamente desde Firestore
    */
   public async getEvents(): Promise<Event[]> {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const colRef = collection(db, 'events');
-        const snap = await withTimeout(getDocs(colRef), 800);
+        const snap = await withTimeout(getDocs(colRef), 3500, 'Consulta de eventos excedió el límite.');
         const list: Event[] = [];
         snap.forEach((docSnap) => {
           list.push({ id: docSnap.id, ...docSnap.data() } as Event);
         });
-        if (list.length > 0) {
-          return list;
-        }
+        markFirestoreSuccess();
+        this.saveLocalEvents(list);
+        return list;
       } catch (err: any) {
         markFirestoreFailure(err);
       }
@@ -151,10 +99,12 @@ class EventService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'events', id);
-        const snap = await withTimeout(getDoc(docRef), 800);
+        const snap = await withTimeout(getDoc(docRef), 3500, 'Consulta de evento excedió el límite.');
         if (snap.exists()) {
+          markFirestoreSuccess();
           return { id: snap.id, ...snap.data() } as Event;
         }
+        return null;
       } catch (err: any) {
         markFirestoreFailure(err);
       }
@@ -205,7 +155,7 @@ class EventService {
   }
 
   /**
-   * Crea un nuevo evento con auditoría
+   * Crea un nuevo evento con persistencia directa en Firestore
    */
   public async createEvent(
     payload: Omit<Event, 'id' | 'ticketsSold' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy'>,
@@ -236,12 +186,16 @@ class EventService {
       updatedBy: operatorUid
     };
 
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const docRef = doc(db, 'events', newId);
         await setDoc(docRef, newEvent);
-      } catch (e) {
-        console.warn('Firestore setDoc events falló, guardando localmente:', e);
+        markFirestoreSuccess();
+        return newEvent;
+      } catch (e: any) {
+        markFirestoreFailure(e);
+        console.error('[EventService] Fallo guardando evento en Firestore:', e);
+        throw new Error(`No se pudo crear el evento en Firestore: ${e.message || 'Error de permisos o red.'}`);
       }
     }
 
@@ -253,7 +207,7 @@ class EventService {
   }
 
   /**
-   * Actualiza un evento existente con auditoría
+   * Actualiza un evento existente con persistencia directa en Firestore
    */
   public async updateEvent(
     id: string,
@@ -279,7 +233,7 @@ class EventService {
       updatedBy: operatorUid
     };
 
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const docRef = doc(db, 'events', id);
         await updateDoc(docRef, {
@@ -287,8 +241,12 @@ class EventService {
           updatedAt: now,
           updatedBy: operatorUid
         });
-      } catch (e) {
-        console.warn('Firestore updateDoc events falló, actualizando localmente:', e);
+        markFirestoreSuccess();
+        return updatedEvent;
+      } catch (e: any) {
+        markFirestoreFailure(e);
+        console.error('[EventService] Fallo actualizando evento en Firestore:', e);
+        throw new Error(`No se pudo actualizar el evento en Firestore: ${e.message || 'Error de permisos o red.'}`);
       }
     }
 

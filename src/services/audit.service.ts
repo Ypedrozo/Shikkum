@@ -3,6 +3,7 @@ import {
   db,
   isFirebaseConfigured,
   isFirestoreHealthy,
+  markFirestoreSuccess,
   markFirestoreFailure,
   withTimeout
 } from './firebase';
@@ -79,7 +80,8 @@ class AuditService {
 
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        await withTimeout(setDoc(doc(db, 'audit_logs', auditId), logEntry), 400);
+        await withTimeout(setDoc(doc(db, 'audit_logs', auditId), logEntry), 3500);
+        markFirestoreSuccess();
       } catch (err) {
         markFirestoreFailure(err);
       }
@@ -99,10 +101,11 @@ class AuditService {
           where('entityId', '==', entityId),
           limit(50)
         );
-        const snap = await withTimeout(getDocs(q), 400);
+        const snap = await withTimeout(getDocs(q), 3500);
         if (!snap.empty) {
           const list = snap.docs.map((d) => d.data() as AuditLog);
           list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          markFirestoreSuccess();
           return list;
         }
         return [];
@@ -134,11 +137,12 @@ class AuditService {
           where('entityId', '==', orderId),
           limit(50)
         );
-        const directLogsSnap = await withTimeout(getDocs(q), 400);
+        const directLogsSnap = await withTimeout(getDocs(q), 3500);
 
         const list: AuditLog[] = [];
         directLogsSnap.forEach((d) => list.push(d.data() as AuditLog));
         list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        markFirestoreSuccess();
         this.orderLogsCache.set(orderId, { data: list, timestamp: Date.now() });
         return list;
       } catch (err) {
@@ -161,10 +165,11 @@ class AuditService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const q = query(collection(db, 'audit_logs'), limit(limitCount));
-        const snap = await withTimeout(getDocs(q), 500);
+        const snap = await withTimeout(getDocs(q), 3500);
         if (!snap.empty) {
           const list = snap.docs.map((d) => d.data() as AuditLog);
           list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          markFirestoreSuccess();
           return list;
         }
       } catch (err) {

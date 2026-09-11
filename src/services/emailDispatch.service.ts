@@ -11,6 +11,7 @@ import {
   functions,
   isFirebaseConfigured,
   isFirestoreHealthy,
+  markFirestoreSuccess,
   markFirestoreFailure,
   isFunctionsHealthy,
   markFunctionsFailure,
@@ -25,35 +26,6 @@ import { auditService } from './audit.service';
 
 const EMAIL_DISPATCHES_STORAGE_KEY = 'shikkum_email_dispatches_store_v1';
 
-// Semilla inicial de despacho para la orden demo pagada ord_demo_001
-const INITIAL_DEMO_DISPATCHES: EmailDispatch[] = [
-  {
-    id: 'dsp_demo_001',
-    dispatchId: 'dsp_demo_001',
-    orderId: 'ord_demo_001',
-    orderCode: 'SHK-2026-DEMO01',
-    customerId: 'cust_demo_001',
-    customerName: 'Roberto Gómez',
-    customerEmail: 'roberto.gomez@demo.com',
-    eventId: 'evt_demo_001',
-    eventTitle: 'Conferencia Anual de Tecnología 2026',
-    ticketIds: [
-      'tkt_ord_demo_001_att_demo_001',
-      'tkt_ord_demo_001_att_demo_002'
-    ],
-    ticketCodes: ['TKT-2026-DEMO01-01', 'TKT-2026-DEMO01-02'],
-    status: 'SENT',
-    sentAt: '2026-09-02T14:35:05.000Z',
-    createdAt: '2026-09-02T14:35:00.000Z',
-    retryCount: 0,
-    errorMessage: null,
-    lastAttemptAt: '2026-09-02T14:35:05.000Z',
-    triggeredBy: 'usr_cashier_01',
-    triggeredByName: 'Carlos Cobranzas',
-    isResend: false
-  }
-];
-
 class EmailDispatchService {
   /**
    * Obtener todos los despachos de correo registrados para una orden
@@ -65,16 +37,15 @@ class EmailDispatchService {
           collection(db, 'email_dispatches'),
           where('orderId', '==', orderId)
         );
-        const snapshot = await withTimeout(getDocs(q), 800);
+        const snapshot = await withTimeout(getDocs(q), 3500, 'Consulta de despachos excedió el límite.');
         const list: EmailDispatch[] = [];
         snapshot.forEach((d) => list.push(d.data() as EmailDispatch));
-        if (list.length > 0) {
-          list.sort(
-            (a, b) =>
-              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          );
-          return list;
-        }
+        markFirestoreSuccess();
+        list.sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        return list;
       } catch (err: any) {
         markFirestoreFailure(err);
       }
@@ -104,16 +75,15 @@ class EmailDispatchService {
     if (isFirebaseConfigured && db && isFirestoreHealthy()) {
       try {
         const q = query(collection(db, 'email_dispatches'), limit(limitCount));
-        const snapshot = await withTimeout(getDocs(q), 800);
-        if (!snapshot.empty) {
-          const list: EmailDispatch[] = [];
-          snapshot.forEach((d) => list.push(d.data() as EmailDispatch));
-          list.sort(
-            (a, b) =>
-              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          );
-          return list;
-        }
+        const snapshot = await withTimeout(getDocs(q), 3500, 'Consulta de despachos excedió el límite.');
+        const list: EmailDispatch[] = [];
+        snapshot.forEach((d) => list.push(d.data() as EmailDispatch));
+        markFirestoreSuccess();
+        list.sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        return list;
       } catch (err: any) {
         markFirestoreFailure(err);
       }
@@ -460,15 +430,11 @@ class EmailDispatchService {
     try {
       const raw = localStorage.getItem(EMAIL_DISPATCHES_STORAGE_KEY);
       if (!raw) {
-        localStorage.setItem(
-          EMAIL_DISPATCHES_STORAGE_KEY,
-          JSON.stringify(INITIAL_DEMO_DISPATCHES)
-        );
-        return [...INITIAL_DEMO_DISPATCHES];
+        return [];
       }
       return JSON.parse(raw);
     } catch {
-      return [...INITIAL_DEMO_DISPATCHES];
+      return [];
     }
   }
 

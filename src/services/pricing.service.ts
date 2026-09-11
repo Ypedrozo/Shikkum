@@ -11,6 +11,7 @@ import {
   db,
   isFirebaseConfigured,
   isFirestoreHealthy,
+  markFirestoreSuccess,
   markFirestoreFailure,
   withTimeout
 } from './firebase';
@@ -18,78 +19,6 @@ import { PriceRule, PricePreviewRequest, PricePreviewResult } from '../types';
 import { eventService } from './event.service';
 
 const STORAGE_KEY = 'shikkum_price_rules_store_v1';
-
-// Reglas iniciales ficticias claramente identificadas como DEMO para el evento de prueba
-const INITIAL_DEMO_RULES: PriceRule[] = [
-  {
-    id: 'prule_demo_001',
-    eventId: 'evt_demo_001',
-    name: 'Entrada Infantil (0 - 12 años)',
-    minAge: 0,
-    maxAge: 12,
-    communityMemberOnly: false,
-    ticketType: 'Infantil',
-    price: 10,
-    currency: 'USD',
-    isActive: true,
-    priority: 10,
-    createdAt: '2026-09-01T12:30:00.000Z',
-    updatedAt: '2026-09-01T12:30:00.000Z',
-    createdBy: 'usr_admin_master_01',
-    updatedBy: 'usr_admin_master_01'
-  },
-  {
-    id: 'prule_demo_002',
-    eventId: 'evt_demo_001',
-    name: 'Entrada Juvenil (13 - 17 años)',
-    minAge: 13,
-    maxAge: 17,
-    communityMemberOnly: false,
-    ticketType: 'Juvenil',
-    price: 15,
-    currency: 'USD',
-    isActive: true,
-    priority: 10,
-    createdAt: '2026-09-01T12:35:00.000Z',
-    updatedAt: '2026-09-01T12:35:00.000Z',
-    createdBy: 'usr_admin_master_01',
-    updatedBy: 'usr_admin_master_01'
-  },
-  {
-    id: 'prule_demo_003',
-    eventId: 'evt_demo_001',
-    name: 'Adulto Miembro Comunitario (18+)',
-    minAge: 18,
-    maxAge: null,
-    communityMemberOnly: true,
-    ticketType: 'Adulto Comunitario',
-    price: 20,
-    currency: 'USD',
-    isActive: true,
-    priority: 20, // Mayor prioridad para miembros
-    createdAt: '2026-09-01T12:40:00.000Z',
-    updatedAt: '2026-09-01T12:40:00.000Z',
-    createdBy: 'usr_admin_master_01',
-    updatedBy: 'usr_admin_master_01'
-  },
-  {
-    id: 'prule_demo_004',
-    eventId: 'evt_demo_001',
-    name: 'Adulto General / Invitado (18+)',
-    minAge: 18,
-    maxAge: null,
-    communityMemberOnly: false,
-    ticketType: 'Adulto General',
-    price: 30,
-    currency: 'USD',
-    isActive: true,
-    priority: 10,
-    createdAt: '2026-09-01T12:45:00.000Z',
-    updatedAt: '2026-09-01T12:45:00.000Z',
-    createdBy: 'usr_admin_master_01',
-    updatedBy: 'usr_admin_master_01'
-  }
-];
 
 class PricingService {
   private hasLiveFirebase(): boolean {
@@ -100,12 +29,11 @@ class PricingService {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (!saved) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_DEMO_RULES));
-        return INITIAL_DEMO_RULES;
+        return [];
       }
       return JSON.parse(saved);
     } catch {
-      return INITIAL_DEMO_RULES;
+      return [];
     }
   }
 
@@ -197,20 +125,20 @@ class PricingService {
   }
 
   /**
-   * Obtiene todas las reglas registradas
+   * Obtiene todas las reglas registradas directamente desde Firestore
    */
   public async getAllRules(): Promise<PriceRule[]> {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const colRef = collection(db, 'price_rules');
-        const snap = await withTimeout(getDocs(colRef), 800);
+        const snap = await withTimeout(getDocs(colRef), 3500, 'Consulta de reglas de precio excedió el límite.');
         const list: PriceRule[] = [];
         snap.forEach((docSnap) => {
           list.push({ id: docSnap.id, ...docSnap.data() } as PriceRule);
         });
-        if (list.length > 0) {
-          return list;
-        }
+        markFirestoreSuccess();
+        this.saveLocalRules(list);
+        return list;
       } catch (err: any) {
         markFirestoreFailure(err);
       }
@@ -236,10 +164,12 @@ class PricingService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'price_rules', id);
-        const snap = await withTimeout(getDoc(docRef), 800);
+        const snap = await withTimeout(getDoc(docRef), 3500, 'Consulta de regla excedió el límite.');
         if (snap.exists()) {
+          markFirestoreSuccess();
           return { id: snap.id, ...snap.data() } as PriceRule;
         }
+        return null;
       } catch (err: any) {
         markFirestoreFailure(err);
       }
@@ -250,7 +180,7 @@ class PricingService {
   }
 
   /**
-   * Crea una nueva regla de precios con auditoría
+   * Crea una nueva regla de precios con persistencia directa en Firestore
    */
   public async createRule(
     payload: Omit<PriceRule, 'id' | 'currency' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy'>,
@@ -287,12 +217,16 @@ class PricingService {
       updatedBy: operatorUid
     };
 
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const docRef = doc(db, 'price_rules', newId);
         await setDoc(docRef, newRule);
-      } catch (e) {
-        console.warn('Firestore setDoc price_rules falló, guardando localmente:', e);
+        markFirestoreSuccess();
+        return newRule;
+      } catch (e: any) {
+        markFirestoreFailure(e);
+        console.error('[PricingService] Fallo guardando regla en Firestore:', e);
+        throw new Error(`No se pudo crear la regla en Firestore: ${e.message || 'Error de permisos o red.'}`);
       }
     }
 
@@ -304,7 +238,7 @@ class PricingService {
   }
 
   /**
-   * Actualiza una regla existente
+   * Actualiza una regla existente con persistencia directa en Firestore
    */
   public async updateRule(
     id: string,
@@ -337,7 +271,7 @@ class PricingService {
       updatedBy: operatorUid
     };
 
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const docRef = doc(db, 'price_rules', id);
         await updateDoc(docRef, {
@@ -347,8 +281,12 @@ class PricingService {
           updatedAt: now,
           updatedBy: operatorUid
         });
-      } catch (e) {
-        console.warn('Firestore updateDoc price_rules falló, actualizando localmente:', e);
+        markFirestoreSuccess();
+        return updatedRule;
+      } catch (e: any) {
+        markFirestoreFailure(e);
+        console.error('[PricingService] Fallo actualizando regla en Firestore:', e);
+        throw new Error(`No se pudo actualizar la regla en Firestore: ${e.message || 'Error de permisos o red.'}`);
       }
     }
 
@@ -373,12 +311,15 @@ class PricingService {
    * Elimina una regla si aún no ha sido utilizada
    */
   public async deleteRule(id: string): Promise<void> {
-    if (this.hasLiveFirebase()) {
+    if (this.hasLiveFirebase() && db) {
       try {
         const docRef = doc(db, 'price_rules', id);
         await deleteDoc(docRef);
-      } catch (e) {
-        console.warn('Firestore deleteDoc price_rules falló:', e);
+        markFirestoreSuccess();
+      } catch (e: any) {
+        markFirestoreFailure(e);
+        console.error('[PricingService] Fallo eliminando regla en Firestore:', e);
+        throw new Error(`No se pudo eliminar la regla de Firestore: ${e.message || 'Error de permisos o red.'}`);
       }
     }
 

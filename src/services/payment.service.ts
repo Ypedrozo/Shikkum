@@ -17,6 +17,7 @@ import {
   storage,
   isFirebaseConfigured,
   isFirestoreHealthy,
+  markFirestoreSuccess,
   markFirestoreFailure,
   isFunctionsHealthy,
   markFunctionsFailure,
@@ -37,29 +38,6 @@ import { auditService } from './audit.service';
 
 const PAYMENTS_STORAGE_KEY = 'shikkum_payments_store_v1';
 
-// Semillas iniciales para entorno de desarrollo / testing
-const INITIAL_DEMO_PAYMENTS: Payment[] = [
-  {
-    id: 'pay_demo_001',
-    orderId: 'ord_demo_003',
-    orderCode: 'SHK-2026-DEMO03',
-    amount: 105,
-    currency: 'USD',
-    method: 'BANK_TRANSFER',
-    status: 'CONFIRMED',
-    reference: 'TRF-BANCO-998822',
-    proofUrl: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&q=80&w=800',
-    proofStoragePath: 'payment_proofs/ord_demo_003/voucher_998822.jpg',
-    notes: 'Transferencia confirmada en cuenta corriente corporativa.',
-    registeredBy: 'usr_cashier_02',
-    registeredByName: 'Personal de Cobranzas 1',
-    registeredAt: '2026-09-02T16:00:00.000Z',
-    confirmedBy: 'usr_admin_master_01',
-    confirmedByName: 'Yeiber Pedrozo (Super Administrador)',
-    confirmedAt: '2026-09-02T16:15:00.000Z'
-  }
-];
-
 class PaymentService {
   private hasLiveFirebase(): boolean {
     return Boolean(isFirebaseConfigured && db);
@@ -69,12 +47,11 @@ class PaymentService {
     try {
       const raw = localStorage.getItem(PAYMENTS_STORAGE_KEY);
       if (!raw) {
-        localStorage.setItem(PAYMENTS_STORAGE_KEY, JSON.stringify(INITIAL_DEMO_PAYMENTS));
-        return INITIAL_DEMO_PAYMENTS;
+        return [];
       }
       return JSON.parse(raw);
     } catch {
-      return INITIAL_DEMO_PAYMENTS;
+      return [];
     }
   }
 
@@ -827,19 +804,18 @@ class PaymentService {
 
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        const q = query(collection(db, 'payments'), limit(100));
-        const snap = await withTimeout(getDocs(q), 800);
-        if (!snap.empty) {
-          snap.forEach((d) => {
-            payments.push({ id: d.id, paymentId: d.id, ...(d.data() as Omit<Payment, 'id'>) });
-          });
-        }
+        const q = query(collection(db, 'payments'), limit(200));
+        const snap = await withTimeout(getDocs(q), 3500, 'Consulta de pagos excedió el límite.');
+        snap.forEach((d) => {
+          payments.push({ id: d.id, paymentId: d.id, ...(d.data() as Omit<Payment, 'id'>) });
+        });
+        markFirestoreSuccess();
+        this.saveLocalPayments(payments);
       } catch (err: any) {
         markFirestoreFailure(err);
+        payments = this.getLocalPayments();
       }
-    }
-
-    if (payments.length === 0) {
+    } else {
       payments = this.getLocalPayments();
     }
 
@@ -879,12 +855,13 @@ class PaymentService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const q = query(collection(db, 'payments'), where('orderId', '==', orderId));
-        const snap = await withTimeout(getDocs(q), 800);
+        const snap = await withTimeout(getDocs(q), 3500, 'Consulta de pagos de la orden excedió el tiempo límite.');
         const list: Payment[] = [];
         snap.forEach((d) => {
           list.push({ id: d.id, paymentId: d.id, ...(d.data() as Omit<Payment, 'id'>) });
         });
-        if (list.length > 0) return list;
+        markFirestoreSuccess();
+        return list;
       } catch (err: any) {
         markFirestoreFailure(err);
       }
@@ -917,10 +894,12 @@ class PaymentService {
   async getPaymentById(paymentId: string): Promise<Payment | null> {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        const snap = await withTimeout(getDoc(doc(db, 'payments', paymentId)), 800);
+        const snap = await withTimeout(getDoc(doc(db, 'payments', paymentId)), 3500, 'Consulta de pago excedió el tiempo límite.');
         if (snap.exists()) {
+          markFirestoreSuccess();
           return { id: snap.id, paymentId: snap.id, ...(snap.data() as Omit<Payment, 'id'>) };
         }
+        return null;
       } catch (err: any) {
         markFirestoreFailure(err);
       }

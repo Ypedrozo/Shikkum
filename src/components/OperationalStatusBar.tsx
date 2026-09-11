@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { isFirebaseConfigured, firebaseConfig } from '../services/firebase';
-import { WifiOff } from 'lucide-react';
+import { isFirebaseConfigured, firebaseConfig, isFirestoreHealthy, probeFirestoreApi } from '../services/firebase';
+import { WifiOff, Database } from 'lucide-react';
 
 export const OperationalStatusBar: React.FC = () => {
   const [isOnline, setIsOnline] = useState<boolean>(
@@ -47,12 +47,20 @@ export const OperationalModeBadge: React.FC = () => {
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
+  const [dbHealthy, setDbHealthy] = useState<boolean>(isFirestoreHealthy());
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+
+    if (isFirebaseConfigured) {
+      probeFirestoreApi().then((healthy) => {
+        setDbHealthy(healthy);
+      });
+    }
+
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
@@ -64,10 +72,11 @@ export const OperationalModeBadge: React.FC = () => {
       <div
         id="operational-mode-badge-prod"
         className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-emerald-950/80 border border-emerald-500/30 text-emerald-300"
-        title={`Conectado al proyecto Firebase ${firebaseConfig.projectId}`}
+        title={`Base de datos Firestore activa y conectada en proyecto: ${firebaseConfig.projectId}`}
       >
-        <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
-        <span className="font-bold">MODO EN VIVO</span>
+        <span className={`w-1.5 h-1.5 rounded-full ${isOnline && dbHealthy ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-400'}`} />
+        <Database className="w-3.5 h-3.5 text-emerald-400" />
+        <span className="font-bold">FIRESTORE EN VIVO</span>
         <span className="text-emerald-500/70">|</span>
         <span className="text-emerald-400 font-mono text-[10px]">{firebaseConfig.projectId}</span>
       </div>

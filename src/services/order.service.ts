@@ -15,6 +15,7 @@ import {
   functions,
   isFirebaseConfigured,
   isFirestoreHealthy,
+  markFirestoreSuccess,
   markFirestoreFailure,
   isFunctionsHealthy,
   markFunctionsFailure,
@@ -37,96 +38,10 @@ import { auditService } from './audit.service';
 const ORDERS_STORAGE_KEY = 'shikkum_orders_store_v1';
 const ATTENDEES_STORAGE_KEY = 'shikkum_order_attendees_store_v1';
 
-// Semillas iniciales para demostración y pruebas en sandbox local
-const INITIAL_DEMO_ORDERS: Order[] = [
-  {
-    id: 'ord_demo_001',
-    orderCode: 'SHK-2026-DEMO01',
-    customerId: 'cust_demo_001',
-    customerName: 'Cliente Demo Uno',
-    eventId: 'evt_demo_001',
-    eventTitle: 'Conferencia Anual de Tecnología 2026',
-    createdBy: 'usr_cashier_01',
-    createdAt: '2026-09-02T14:30:00.000Z',
-    updatedAt: '2026-09-02T14:30:00.000Z',
-    status: 'PAID',
-    attendeeCount: 2,
-    subtotal: 55,
-    total: 55,
-    currency: 'USD',
-    requestId: 'req_seed_demo_001'
-  },
-  {
-    id: 'ord_demo_002',
-    orderCode: 'SHK-2026-DEMO02',
-    customerId: 'cust_demo_002',
-    customerName: 'Cliente Demo Dos (No Miembro)',
-    eventId: 'evt_demo_001',
-    eventTitle: 'Conferencia Anual de Tecnología 2026',
-    createdBy: 'usr_cashier_01',
-    createdAt: '2026-09-03T10:15:00.000Z',
-    updatedAt: '2026-09-03T10:15:00.000Z',
-    status: 'PENDING_PAYMENT',
-    attendeeCount: 1,
-    subtotal: 45,
-    total: 45,
-    currency: 'USD',
-    requestId: 'req_seed_demo_002'
-  }
-];
-
-const INITIAL_DEMO_ATTENDEES: OrderAttendee[] = [
-  {
-    id: 'att_demo_001',
-    orderId: 'ord_demo_001',
-    customerId: 'cust_demo_001',
-    eventId: 'evt_demo_001',
-    fullName: 'Roberto Gómez',
-    ageAtPurchase: 32,
-    isCommunityMemberAtPurchase: true,
-    priceRuleId: 'rule_demo_001',
-    priceRuleName: 'Adulto General (Miembro Comunidad)',
-    ticketType: 'General',
-    unitPrice: 35,
-    subtotal: 35,
-    currency: 'USD',
-    createdAt: '2026-09-02T14:30:00.000Z'
-  },
-  {
-    id: 'att_demo_002',
-    orderId: 'ord_demo_001',
-    customerId: 'cust_demo_001',
-    eventId: 'evt_demo_001',
-    fullName: 'Lucas Gómez',
-    ageAtPurchase: 11,
-    isCommunityMemberAtPurchase: true,
-    priceRuleId: 'rule_demo_003',
-    priceRuleName: 'Menor de Edad (Hasta 12 años)',
-    ticketType: 'Menores',
-    unitPrice: 20,
-    subtotal: 20,
-    currency: 'USD',
-    createdAt: '2026-09-02T14:30:00.000Z'
-  },
-  {
-    id: 'att_demo_003',
-    orderId: 'ord_demo_002',
-    customerId: 'cust_demo_002',
-    eventId: 'evt_demo_001',
-    fullName: 'Mariana López',
-    ageAtPurchase: 28,
-    isCommunityMemberAtPurchase: false,
-    priceRuleId: 'rule_demo_002',
-    priceRuleName: 'Adulto General (Público General No Miembro)',
-    ticketType: 'General',
-    unitPrice: 45,
-    subtotal: 45,
-    currency: 'USD',
-    createdAt: '2026-09-03T10:15:00.000Z'
-  }
-];
-
 class OrderService {
+  private inFlightGetOrders: Promise<Order[]> | null = null;
+  private lastOrdersNoticeTime = 0;
+
   private hasLiveFirebase(): boolean {
     return isFirebaseConfigured;
   }
@@ -135,12 +50,11 @@ class OrderService {
     try {
       const raw = localStorage.getItem(ORDERS_STORAGE_KEY);
       if (!raw) {
-        localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(INITIAL_DEMO_ORDERS));
-        return INITIAL_DEMO_ORDERS;
+        return [];
       }
       return JSON.parse(raw);
     } catch {
-      return INITIAL_DEMO_ORDERS;
+      return [];
     }
   }
 
@@ -156,12 +70,11 @@ class OrderService {
     try {
       const raw = localStorage.getItem(ATTENDEES_STORAGE_KEY);
       if (!raw) {
-        localStorage.setItem(ATTENDEES_STORAGE_KEY, JSON.stringify(INITIAL_DEMO_ATTENDEES));
-        return INITIAL_DEMO_ATTENDEES;
+        return [];
       }
       return JSON.parse(raw);
     } catch {
-      return INITIAL_DEMO_ATTENDEES;
+      return [];
     }
   }
 
@@ -576,30 +489,55 @@ class OrderService {
   }
 
   /**
-   * Consultar órdenes con filtros y ordenamiento
+   * Consultar órdenes con filtros y ordenamiento directamente desde Firestore o almacén local resiliente
    */
   async getOrders(params?: OrderFilterParams): Promise<Order[]> {
-    let ordersList: Order[] = [];
+    if (this.inFlightGetOrders) {
+      const all = await this.inFlightGetOrders;
+      return this.filterAndSortOrders(all, params);
+    }
 
-    if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
-      try {
-        const snap = await withTimeout(getDocs(query(collection(db, 'orders'), limit(100))), 400);
-        snap.forEach((d) => {
-          ordersList.push({ id: d.id, ...(d.data() as Omit<Order, 'id'>) });
-        });
-      } catch (err: any) {
-        console.info('[OrderService] Firestore no disponible en este entorno, usando órdenes locales instantáneamente.');
-        markFirestoreFailure(err);
+    this.inFlightGetOrders = (async () => {
+      let ordersList: Order[] = [];
+
+      if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
+        try {
+          const snap = await withTimeout(
+            getDocs(query(collection(db, 'orders'), limit(200))),
+            3500,
+            'Consulta de órdenes excedió el límite de tiempo.'
+          );
+          snap.forEach((d) => {
+            ordersList.push({ id: d.id, ...(d.data() as Omit<Order, 'id'>) });
+          });
+          markFirestoreSuccess();
+          this.saveLocalOrders(ordersList);
+        } catch (err: any) {
+          markFirestoreFailure(err);
+          if (Date.now() - this.lastOrdersNoticeTime > 60000) {
+            this.lastOrdersNoticeTime = Date.now();
+            console.info('[OrderService] Conexión remota no disponible, usando órdenes locales resilientes.');
+          }
+          ordersList = this.getLocalOrders();
+        }
+      } else {
+        ordersList = this.getLocalOrders();
       }
-    }
 
-    // Si Firestore no devolvió datos o está inactivo, usar almacenamiento local ultra-rápido
-    if (ordersList.length === 0) {
-      ordersList = this.getLocalOrders();
-    }
+      return ordersList;
+    })();
 
+    try {
+      const all = await this.inFlightGetOrders;
+      return this.filterAndSortOrders(all, params);
+    } finally {
+      this.inFlightGetOrders = null;
+    }
+  }
+
+  private filterAndSortOrders(ordersList: Order[], params?: OrderFilterParams): Order[] {
     if (!params) {
-      return ordersList.sort(
+      return [...ordersList].sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
     }
@@ -640,10 +578,16 @@ class OrderService {
   async getOrderById(orderId: string): Promise<Order | null> {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        const snap = await withTimeout(getDoc(doc(db, 'orders', orderId)), 400);
+        const snap = await withTimeout(
+          getDoc(doc(db, 'orders', orderId)),
+          3500,
+          'Consulta de orden excedió el límite de tiempo.'
+        );
         if (snap.exists()) {
+          markFirestoreSuccess();
           return { id: snap.id, ...(snap.data() as Omit<Order, 'id'>) };
         }
+        return null;
       } catch (e: any) {
         markFirestoreFailure(e);
       }
@@ -659,14 +603,17 @@ class OrderService {
   async getOrderAttendees(orderId: string): Promise<OrderAttendee[]> {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        const snap = await withTimeout(getDocs(collection(db, 'orders', orderId, 'attendees')), 400);
+        const snap = await withTimeout(
+          getDocs(collection(db, 'orders', orderId, 'attendees')),
+          3500,
+          'Consulta de asistentes excedió el límite de tiempo.'
+        );
         const list: OrderAttendee[] = [];
         snap.forEach((d) => {
           list.push({ id: d.id, ...(d.data() as Omit<OrderAttendee, 'id'>) });
         });
-        if (list.length > 0) {
-          return list;
-        }
+        markFirestoreSuccess();
+        return list;
       } catch (e: any) {
         markFirestoreFailure(e);
       }
