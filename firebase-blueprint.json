@@ -1,0 +1,265 @@
+{
+  "entities": {
+    "user": {
+      "title": "User",
+      "description": "Perfil de usuario del sistema SHIKKUM con roles RBAC (admin, cashier, gate_operator).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "UID de Firebase Auth" },
+        "email": { "type": "string", "format": "email", "description": "Correo electrónico del operador" },
+        "displayName": { "type": "string", "description": "Nombre completo del operador" },
+        "role": { "type": "string", "enum": ["admin", "cashier", "gate_operator"], "description": "Rol RBAC del operador" },
+        "isActive": { "type": "boolean", "description": "Estado activo/inactivo del usuario" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "lastLoginAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "isActive"]
+    },
+    "customer": {
+      "title": "Customer",
+      "description": "Cliente comercial comprador de entradas.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "documentId": { "type": "string" },
+        "isCommunityMember": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["fullName", "email", "isCommunityMember", "isActive", "createdAt", "updatedAt", "createdBy", "updatedBy"]
+    },
+    "event": {
+      "title": "Event",
+      "description": "Evento de la comunidad para venta y control de acceso.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "date": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "venue": { "type": "string" },
+        "capacity": { "type": "number" },
+        "status": { "type": "string", "enum": ["DRAFT", "ACTIVE", "CLOSED", "CANCELLED"] },
+        "ticketsSold": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["title", "date", "status"]
+    },
+    "priceRule": {
+      "title": "PriceRule",
+      "description": "Regla de precio por edad y membresía comunitaria para un evento.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "eventId": { "type": "string" },
+        "name": { "type": "string" },
+        "minAge": { "type": "number" },
+        "maxAge": { "type": "number" },
+        "communityMemberOnly": { "type": "boolean" },
+        "ticketType": { "type": "string" },
+        "price": { "type": "number" },
+        "currency": { "type": "string", "enum": ["USD"] },
+        "isActive": { "type": "boolean" },
+        "priority": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["eventId", "name", "minAge", "price", "currency", "priority", "isActive"]
+    },
+    "order": {
+      "title": "Order",
+      "description": "Orden de compra de entradas en estado PENDING_PAYMENT, PAID o CANCELLED.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderCode": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "eventId": { "type": "string" },
+        "eventTitle": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["PENDING_PAYMENT", "PAID", "CANCELLED"] },
+        "attendeeCount": { "type": "number" },
+        "subtotal": { "type": "number" },
+        "total": { "type": "number" },
+        "currency": { "type": "string", "enum": ["USD"] },
+        "requestId": { "type": "string" }
+      },
+      "required": ["orderCode", "customerId", "customerName", "eventId", "eventTitle", "attendeeCount", "subtotal", "total", "status", "currency", "createdBy", "createdAt", "updatedAt"]
+    },
+    "attendee": {
+      "title": "Attendee",
+      "description": "Asistente registrado en una orden con su snapshot de precio congelado.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "eventId": { "type": "string" },
+        "fullName": { "type": "string" },
+        "ageAtPurchase": { "type": "number" },
+        "isCommunityMemberAtPurchase": { "type": "boolean" },
+        "priceRuleId": { "type": "string" },
+        "priceRuleName": { "type": "string" },
+        "ticketType": { "type": "string" },
+        "unitPrice": { "type": "number" },
+        "subtotal": { "type": "number" },
+        "currency": { "type": "string", "enum": ["USD"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orderId", "customerId", "eventId", "fullName", "ageAtPurchase", "isCommunityMemberAtPurchase", "priceRuleId", "priceRuleName", "unitPrice", "subtotal", "currency", "createdAt"]
+    },
+    "payment": {
+      "title": "Payment",
+      "description": "Registro de pago vinculado a una orden con verificación atómica y comprobante.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderId": { "type": "string" },
+        "orderCode": { "type": "string" },
+        "amount": { "type": "number" },
+        "currency": { "type": "string", "enum": ["USD"] },
+        "method": { "type": "string", "enum": ["CASH", "BANK_TRANSFER", "CARD", "OTHER"] },
+        "status": { "type": "string", "enum": ["PENDING", "CONFIRMED", "REJECTED"] },
+        "reference": { "type": "string" },
+        "proofStoragePath": { "type": "string" },
+        "proofUrl": { "type": "string" },
+        "registeredBy": { "type": "string" },
+        "registeredByName": { "type": "string" },
+        "registeredAt": { "type": "string", "format": "date-time" },
+        "confirmedBy": { "type": "string" },
+        "confirmedByName": { "type": "string" },
+        "confirmedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orderId", "orderCode", "amount", "currency", "method", "status", "registeredBy", "registeredAt"]
+    },
+    "ticket": {
+      "title": "Ticket",
+      "description": "Boleto emitido para ingreso por código QR criptográfico.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ticketCode": { "type": "string" },
+        "qrToken": { "type": "string" },
+        "status": { "type": "string", "enum": ["ISSUED", "VALID", "USED", "CANCELLED"] },
+        "orderId": { "type": "string" },
+        "attendeeId": { "type": "string" },
+        "eventId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "issuedAt": { "type": "string", "format": "date-time" },
+        "issuedBy": { "type": "string" }
+      },
+      "required": ["ticketCode", "qrToken", "status", "orderId", "eventId", "customerId", "issuedAt"]
+    },
+    "accessLog": {
+      "title": "AccessLog",
+      "description": "Auditoría de escaneos y validaciones de acceso en puertas.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ticketId": { "type": "string" },
+        "eventId": { "type": "string" },
+        "gateId": { "type": "string" },
+        "gateOperatorUid": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "authorized": { "type": "boolean" },
+        "validationMethod": { "type": "string", "enum": ["QR", "MANUAL"] }
+      },
+      "required": ["ticketId", "eventId", "gateId", "gateOperatorUid", "timestamp", "authorized", "validationMethod"]
+    },
+    "emailDispatch": {
+      "title": "EmailDispatch",
+      "description": "Bitácora de despacho y reenvío de entradas por correo con Resend.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "dispatchId": { "type": "string" },
+        "orderId": { "type": "string" },
+        "orderCode": { "type": "string" },
+        "customerEmail": { "type": "string", "format": "email" },
+        "status": { "type": "string", "enum": ["SENDING", "SENT", "FAILED"] },
+        "sentAt": { "type": "string", "format": "date-time" },
+        "retryCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["dispatchId", "orderId", "orderCode", "customerEmail", "status", "createdAt"]
+    },
+    "auditLog": {
+      "title": "AuditLog",
+      "description": "Pista inmutable de auditoría para todas las acciones del sistema.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" },
+        "action": { "type": "string" },
+        "entityType": { "type": "string" },
+        "entityId": { "type": "string" }
+      },
+      "required": ["timestamp", "userId", "action", "entityType", "entityId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "user",
+      "description": "Perfiles y roles de operadores autenticados en Firebase."
+    },
+    "/customers/{customerId}": {
+      "schema": "customer",
+      "description": "Directorio de clientes registrados."
+    },
+    "/events/{eventId}": {
+      "schema": "event",
+      "description": "Eventos de la comunidad."
+    },
+    "/price_rules/{priceRuleId}": {
+      "schema": "priceRule",
+      "description": "Reglas de precio por evento."
+    },
+    "/orders/{orderId}": {
+      "schema": "order",
+      "description": "Órdenes comerciales inmutables."
+    },
+    "/orders/{orderId}/attendees/{attendeeId}": {
+      "schema": "attendee",
+      "description": "Asistentes de la orden con snapshot congelado de precio."
+    },
+    "/payments/{paymentId}": {
+      "schema": "payment",
+      "description": "Registro contable y comprobantes de pago de órdenes."
+    },
+    "/tickets/{ticketId}": {
+      "schema": "ticket",
+      "description": "Boletos de acceso con token QR criptográfico emitidos por el backend."
+    },
+    "/access_logs/{logId}": {
+      "schema": "accessLog",
+      "description": "Auditoría de validaciones en puerta de acceso."
+    },
+    "/email_dispatches/{dispatchId}": {
+      "schema": "emailDispatch",
+      "description": "Despachos y reenvíos de boletos vía Resend."
+    },
+    "/audit_logs/{logId}": {
+      "schema": "auditLog",
+      "description": "Bitácora inmutable de auditoría de operaciones."
+    }
+  }
+}

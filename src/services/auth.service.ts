@@ -12,64 +12,48 @@ import { SystemRole, SystemUser } from '../types';
 const SESSION_STORAGE_KEY = 'shikkum_active_session_v2';
 
 /**
- * Cuentas iniciales de prueba y desarrollo para verificación inmediata
- * de los criterios de aceptación y administración de SHIKKUM.
+ * Cuentas para el modo SANDBOX DEMO únicamente (cuando Firebase no está configurado).
+ * En MODO EN VIVO (LIVE) las cuentas se gestionan exclusivamente en Firebase Authentication.
  */
-const MOCK_DEV_ACCOUNTS: Record<string, { password: string; user: SystemUser }> = {
-  'yeiberpedrozo@gmail.com': {
-    password: 'AdminPassword2026!',
+const SANDBOX_DEMO_ACCOUNTS: Record<string, { user: SystemUser }> = {
+  'admin@sandbox.local': {
     user: {
-      uid: 'usr_yeiber_master_01',
-      email: 'yeiberpedrozo@gmail.com',
-      displayName: 'Yeiber Pedrozo (Super Administrador)',
+      uid: 'usr_sandbox_admin_01',
+      email: 'admin@sandbox.local',
+      displayName: 'Administrador Demo (Sandbox)',
       role: 'admin',
       isActive: true,
       createdAt: '2026-09-01T10:00:00.000Z',
       updatedAt: '2026-09-01T10:00:00.000Z'
     }
   },
-  'admin@shikkum.com': {
-    password: 'AdminPassword2026!',
+  'cashier@sandbox.local': {
     user: {
-      uid: 'usr_admin_master_01',
-      email: 'admin@shikkum.com',
-      displayName: 'Yeiber Pedrozo (Super Administrador)',
-      role: 'admin',
-      isActive: true,
-      createdAt: '2026-09-01T10:00:00.000Z',
-      updatedAt: '2026-09-01T10:00:00.000Z'
-    }
-  },
-  'cashier@shikkum.com': {
-    password: 'CashierPassword2026!',
-    user: {
-      uid: 'usr_cashier_02',
-      email: 'cashier@shikkum.com',
-      displayName: 'Personal de Cobranzas 1',
+      uid: 'usr_sandbox_cashier_02',
+      email: 'cashier@sandbox.local',
+      displayName: 'Personal Cobranzas Demo (Sandbox)',
       role: 'cashier',
       isActive: true,
       createdAt: '2026-09-02T11:00:00.000Z',
       updatedAt: '2026-09-02T11:00:00.000Z'
     }
   },
-  'gate@shikkum.com': {
-    password: 'GatePassword2026!',
+  'gate@sandbox.local': {
     user: {
-      uid: 'usr_gate_03',
-      email: 'gate@shikkum.com',
-      displayName: 'Operador Puerta 1',
+      uid: 'usr_sandbox_gate_03',
+      email: 'gate@sandbox.local',
+      displayName: 'Operador Puerta Demo (Sandbox)',
       role: 'gate_operator',
       isActive: true,
       createdAt: '2026-09-02T12:00:00.000Z',
       updatedAt: '2026-09-02T12:00:00.000Z'
     }
   },
-  'disabled@shikkum.com': {
-    password: 'DisabledPassword2026!',
+  'disabled@sandbox.local': {
     user: {
-      uid: 'usr_disabled_04',
-      email: 'disabled@shikkum.com',
-      displayName: 'Usuario Desactivado',
+      uid: 'usr_sandbox_disabled_04',
+      email: 'disabled@sandbox.local',
+      displayName: 'Usuario Inactivo Demo (Sandbox)',
       role: 'cashier',
       isActive: false, // Bloqueo estricto
       createdAt: '2026-09-01T08:00:00.000Z',
@@ -227,7 +211,10 @@ class AuthService {
 
     let firebaseAuthError: any = null;
 
-    // 1. Intento con Firebase Authentication si está inicializado
+    // 1. Entorno LIVE con Firebase Authentication configurado:
+    // La autenticación se realiza EXCLUSIVAMENTE mediante Firebase Authentication.
+    // NUNCA se auto-crean usuarios desde el frontend.
+    // NUNCA se enmascaran errores de credenciales en producción/live.
     if (this.hasLiveFirebase() && auth) {
       try {
         const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, pass);
@@ -258,18 +245,20 @@ class AuthService {
                 lastLoginAt: new Date().toISOString()
               }).catch(() => {});
             } else {
-              // Si el documento en /users/{uid} no existe aún en Firestore, se inicializa
+              // Si el usuario existe en Firebase Auth pero su doc en Firestore no ha sido inicializado
               const initialRole: SystemRole =
                 claimRole ||
-                (cleanEmail === 'yeiberpedrozo@gmail.com' || cleanEmail.includes('admin')
+                (cleanEmail === 'yeiberpedrozo@gmail.com' || cleanEmail === 'admin@shikkum.com'
                   ? 'admin'
-                  : cleanEmail.includes('gate')
+                  : cleanEmail === 'gate@shikkum.com' || cleanEmail === 'puerta@shikkum.com'
                   ? 'gate_operator'
                   : 'cashier');
               const initialDisplayName =
                 fbUser.displayName ||
                 (cleanEmail === 'yeiberpedrozo@gmail.com'
                   ? 'Yeiber Pedrozo (Super Administrador)'
+                  : cleanEmail === 'admin@shikkum.com'
+                  ? 'Administrador SHIKKUM'
                   : cleanEmail.split('@')[0]);
 
               const newUserDoc = {
@@ -284,14 +273,14 @@ class AuthService {
               };
 
               await setDoc(userDocRef, newUserDoc).catch((e) => {
-                console.warn('[AuthService] No se pudo crear doc inicial en Firestore:', e);
+                console.warn('[AuthService] No se pudo inicializar doc en Firestore:', e);
               });
 
               role = initialRole;
               displayName = initialDisplayName;
             }
           } catch (err) {
-            console.warn('[AuthService] Advertencia al verificar documento en /users:', err);
+            console.warn('[AuthService] Advertencia al consultar /users:', err);
           }
         }
 
@@ -321,33 +310,7 @@ class AuthService {
           throw err;
         }
         firebaseAuthError = err;
-        console.warn('[AuthService] Firebase Auth aviso al autenticar:', err.code || err.message);
-
-        // Si Firebase Authentication aún no ha sido habilitado en Firebase Console (CONFIGURATION_NOT_FOUND)
-        // o no está disponible el proveedor, permitir el acceso con cuentas de verificación autorizadas
-        const isConfigMissing =
-          err.message?.includes('CONFIGURATION_NOT_FOUND') ||
-          err.code === 'auth/configuration-not-found' ||
-          err.code === 'auth/operation-not-allowed' ||
-          err.code === 'auth/internal-error';
-
-        const devAccount = MOCK_DEV_ACCOUNTS[cleanEmail];
-        if (isConfigMissing && devAccount && devAccount.password === pass) {
-          if (!devAccount.user.isActive) {
-            throw new Error('ACCOUNT_DISABLED: Esta cuenta de usuario se encuentra desactivada por la administración.');
-          }
-          const sessionUser: SystemUser = {
-            ...devAccount.user,
-            lastLoginAt: new Date().toISOString()
-          };
-          this.currentUser = sessionUser;
-          this.sessionSource = 'local';
-          this.saveLocalSession(sessionUser, 'local');
-          this.notifyListeners();
-          return sessionUser;
-        }
-
-        // Cuando Firebase está configurado en producción, no se debe enmascarar un fallo de credenciales
+        console.warn('[AuthService] Error de autenticación en Firebase Auth:', err.code || err.message);
         throw new Error(this.mapAuthError(firebaseAuthError.code || firebaseAuthError.message));
       }
     }
@@ -356,22 +319,19 @@ class AuthService {
       if (firebaseAuthError) {
         throw new Error(this.mapAuthError(firebaseAuthError.code || firebaseAuthError.message));
       }
-      throw new Error('La autenticación en producción requiere conexión activa a Firebase.');
+      throw new Error('La autenticación en producción requiere conexión activa a Firebase Authentication.');
     }
 
-    // Si Firebase no está configurado (modo offline local), se permite el fallback de desarrollo
-    const devAccount = MOCK_DEV_ACCOUNTS[cleanEmail];
-    if (devAccount) {
-      if (devAccount.password !== pass) {
-        throw new Error('Correo electrónico o contraseña incorrectos.');
-      }
-
-      if (!devAccount.user.isActive) {
+    // 2. MODO SANDBOX (Firebase no configurado):
+    // Cuentas demo locales para pruebas visuales en entorno sin Firebase configurado.
+    const sandboxAccount = SANDBOX_DEMO_ACCOUNTS[cleanEmail];
+    if (sandboxAccount) {
+      if (!sandboxAccount.user.isActive) {
         throw new Error('ACCOUNT_DISABLED: Esta cuenta de usuario se encuentra desactivada por la administración.');
       }
 
       const sessionUser: SystemUser = {
-        ...devAccount.user,
+        ...sandboxAccount.user,
         lastLoginAt: new Date().toISOString()
       };
 
@@ -380,10 +340,6 @@ class AuthService {
       this.saveLocalSession(sessionUser, 'local');
       this.notifyListeners();
       return sessionUser;
-    }
-
-    if (firebaseAuthError) {
-      throw new Error(this.mapAuthError(firebaseAuthError.code || firebaseAuthError.message));
     }
 
     throw new Error('Correo electrónico o contraseña incorrectos.');
@@ -494,46 +450,19 @@ class AuthService {
   }
 
   /**
-   * Lista de credenciales de prueba para el panel interactivo de desarrollo
+   * Cuentas demo accesibles únicamente en modo SANDBOX DEMO (cuando Firebase no está configurado).
+   * En MODO EN VIVO (LIVE) se devuelve un arreglo vacío para no exponer datos ni accesos demo.
    */
   public getDevTestAccounts() {
-    return [
-      {
-        email: 'yeiberpedrozo@gmail.com',
-        password: 'AdminPassword2026!',
-        role: 'admin' as SystemRole,
-        displayName: 'Yeiber Pedrozo (Super Admin)',
-        isActive: true
-      },
-      {
-        email: 'admin@shikkum.com',
-        password: 'AdminPassword2026!',
-        role: 'admin' as SystemRole,
-        displayName: 'Administrador General',
-        isActive: true
-      },
-      {
-        email: 'cashier@shikkum.com',
-        password: 'CashierPassword2026!',
-        role: 'cashier' as SystemRole,
-        displayName: 'Personal de Cobranzas',
-        isActive: true
-      },
-      {
-        email: 'gate@shikkum.com',
-        password: 'GatePassword2026!',
-        role: 'gate_operator' as SystemRole,
-        displayName: 'Operador de Puerta',
-        isActive: true
-      },
-      {
-        email: 'disabled@shikkum.com',
-        password: 'DisabledPassword2026!',
-        role: 'cashier' as SystemRole,
-        displayName: 'Usuario Desactivado',
-        isActive: false
-      }
-    ];
+    if (this.hasLiveFirebase()) {
+      return [];
+    }
+    return Object.values(SANDBOX_DEMO_ACCOUNTS).map((acc) => ({
+      email: acc.user.email,
+      role: acc.user.role,
+      displayName: acc.user.displayName,
+      isActive: acc.user.isActive
+    }));
   }
 }
 

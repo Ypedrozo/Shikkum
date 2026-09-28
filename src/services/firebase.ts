@@ -52,7 +52,8 @@ if (isFirebaseConfigured) {
     authInstance = getAuth(appInstance);
     try {
       dbInstance = initializeFirestore(appInstance, {
-        experimentalAutoDetectLongPolling: true
+        experimentalAutoDetectLongPolling: true,
+        ignoreUndefinedProperties: true
       });
     } catch {
       dbInstance = getFirestore(appInstance);
@@ -127,7 +128,7 @@ export async function probeFirestoreApi(): Promise<boolean> {
   if (!isFirebaseConfigured || !firebaseConfig.projectId) return false;
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2000);
+    const timer = setTimeout(() => controller.abort(), 5000);
     const res = await fetch(
       `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/orders?key=${firebaseConfig.apiKey}`,
       { signal: controller.signal }
@@ -274,11 +275,11 @@ export const markFunctionsSuccess = () => {
 
 /**
  * Envoltorio para operaciones asíncronas con límite de tiempo controlado (timeout).
- * Tiempo límite equilibrado para evitar congelamiento de UI (3.5 segundos por defecto).
+ * Tiempo límite equilibrado para permitir cold-starts y conexiones TLS normales sin falsos errores (8 segundos por defecto).
  */
 export async function withTimeout<T>(
   promise: Promise<T>,
-  timeoutMs: number = 3500,
+  timeoutMs: number = 8000,
   timeoutMessage: string = 'La operación remota excedió el tiempo límite de espera.'
 ): Promise<T> {
   let timer: any;

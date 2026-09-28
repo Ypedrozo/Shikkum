@@ -313,75 +313,6 @@ SHIKKUM © 2026 — Programa desarrollado por Yeiber Pedrozo — Todos los derec
   `.trim();
 }
 
-/**
- * Implementación desacoplada predeterminada del proveedor de correo (DefaultEmailProvider).
- * Soporta credenciales SMTP / API si están definidas en variables de entorno, o
- * ejecuta la entrega estructurada con auditoría completa en el log de Cloud Functions.
- */
-export class DefaultEmailProvider implements IEmailProvider {
-  name = 'SHIKKUM_DEFAULT_EMAIL_PROVIDER';
-
-  async sendTicketsEmail(payload: TicketEmailPayload): Promise<EmailSendResult> {
-    const nowIso = new Date().toISOString();
-
-    // Validar formato mínimo de correo del destinatario
-    if (!payload.recipientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.recipientEmail.trim())) {
-      return {
-        success: false,
-        provider: this.name,
-        sentAt: nowIso,
-        error: `Dirección de correo electrónico inválida: '${payload.recipientEmail}'`
-      };
-    }
-
-    if (!payload.tickets || payload.tickets.length === 0) {
-      return {
-        success: false,
-        provider: this.name,
-        sentAt: nowIso,
-        error: 'El paquete no contiene boletos para enviar.'
-      };
-    }
-
-    try {
-      const htmlContent = generateTicketsEmailHtml(payload);
-      const textContent = generateTicketsEmailText(payload);
-      const subject = `SHIKKUM — Tus entradas para ${payload.eventTitle}`;
-
-      // Registro de auditoría en consola de Cloud Functions
-      console.log(`[SHIKKUM EmailProvider] Enviando correo para orden ${payload.orderCode}:`, {
-        dispatchId: payload.dispatchId,
-        recipient: payload.recipientEmail,
-        buyer: payload.buyerName,
-        event: payload.eventTitle,
-        ticketCount: payload.tickets.length,
-        subject,
-        htmlLength: htmlContent.length,
-        textLength: textContent.length,
-        isResend: Boolean(payload.isResend)
-      });
-
-      // Generación de ID de mensaje único
-      const messageId = `msg_${payload.dispatchId}_${Date.now()}`;
-
-      return {
-        success: true,
-        messageId,
-        provider: this.name,
-        sentAt: nowIso
-      };
-    } catch (err: any) {
-      console.error('[SHIKKUM EmailProvider] Error generando/enviando correo:', err);
-      return {
-        success: false,
-        provider: this.name,
-        sentAt: nowIso,
-        error: err?.message || 'Fallo desconocido en el proveedor de correo.'
-      };
-    }
-  }
-}
-
 export class ResendEmailProvider implements IEmailProvider {
   name = 'resend';
 
@@ -427,7 +358,7 @@ export class ResendEmailProvider implements IEmailProvider {
       const htmlContent = generateTicketsEmailHtml(payload);
       const textContent = generateTicketsEmailText(payload);
       const fromAddress =
-        process.env.RESEND_FROM_EMAIL?.trim() || 'SHIKKUM Entradas <onboarding@resend.dev>';
+        process.env.RESEND_FROM_EMAIL?.trim() || 'SHIKKUM Entradas <tickets@shikkum.com>';
       const subject = payload.isResend
         ? `[Reenvío] SHIKKUM — Tus entradas para ${payload.eventTitle} (${payload.orderCode})`
         : `SHIKKUM — Tus entradas para ${payload.eventTitle} (${payload.orderCode})`;
@@ -480,5 +411,5 @@ export class ResendEmailProvider implements IEmailProvider {
   }
 }
 
-// Instancia activa oficial: ResendEmailProvider
+// Instancia activa oficial única: ResendEmailProvider
 export const emailProvider: IEmailProvider = new ResendEmailProvider();

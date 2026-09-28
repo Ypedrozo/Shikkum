@@ -224,6 +224,7 @@ export async function dispatchTicketsEmailForOrder(
     // Actualizar registro de despacho a SENT
     await dispatchRef.update({
       status: 'SENT',
+      messageId: sendResult.messageId || null,
       sentAt: successSentAt,
       lastAttemptAt: successSentAt,
       errorMessage: null

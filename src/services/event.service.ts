@@ -7,6 +7,7 @@ import {
   updateDoc
 } from 'firebase/firestore';
 import {
+  auth,
   db,
   isFirebaseConfigured,
   isFirestoreHealthy,
@@ -76,7 +77,7 @@ class EventService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const colRef = collection(db, 'events');
-        const snap = await withTimeout(getDocs(colRef), 3500, 'Consulta de eventos excedió el límite.');
+        const snap = await withTimeout(getDocs(colRef), 8000, 'Consulta de eventos excedió el límite.');
         const list: Event[] = [];
         snap.forEach((docSnap) => {
           list.push({ id: docSnap.id, ...docSnap.data() } as Event);
@@ -99,7 +100,7 @@ class EventService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'events', id);
-        const snap = await withTimeout(getDoc(docRef), 3500, 'Consulta de evento excedió el límite.');
+        const snap = await withTimeout(getDoc(docRef), 8000, 'Consulta de evento excedió el límite.');
         if (snap.exists()) {
           markFirestoreSuccess();
           return { id: snap.id, ...snap.data() } as Event;
@@ -198,13 +199,17 @@ class EventService {
 
     // Sincronizar en vivo con Firestore si la base de datos está disponible
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
-      try {
-        const docRef = doc(db, 'events', newId);
-        await setDoc(docRef, newEvent);
-        markFirestoreSuccess();
-      } catch (e: any) {
-        markFirestoreFailure(e);
-        console.warn('[EventService] Evento guardado localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+      if (auth && auth.currentUser) {
+        try {
+          const docRef = doc(db, 'events', newId);
+          await setDoc(docRef, newEvent);
+          markFirestoreSuccess();
+        } catch (e: any) {
+          markFirestoreFailure(e);
+          console.warn('[EventService] Evento guardado localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+        }
+      } else {
+        console.info('[EventService] Evento guardado localmente (sesión local activa sin Firebase Auth directo).');
       }
     }
 
@@ -250,17 +255,21 @@ class EventService {
 
     // Sincronizar en vivo con Firestore si la base de datos está disponible
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
-      try {
-        const docRef = doc(db, 'events', id);
-        await updateDoc(docRef, {
-          ...updates,
-          updatedAt: now,
-          updatedBy: operatorUid
-        });
-        markFirestoreSuccess();
-      } catch (e: any) {
-        markFirestoreFailure(e);
-        console.warn('[EventService] Evento actualizado localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+      if (auth && auth.currentUser) {
+        try {
+          const docRef = doc(db, 'events', id);
+          await updateDoc(docRef, {
+            ...updates,
+            updatedAt: now,
+            updatedBy: operatorUid
+          });
+          markFirestoreSuccess();
+        } catch (e: any) {
+          markFirestoreFailure(e);
+          console.warn('[EventService] Evento actualizado localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+        }
+      } else {
+        console.info('[EventService] Evento actualizado localmente (sesión local activa sin Firebase Auth directo).');
       }
     }
 

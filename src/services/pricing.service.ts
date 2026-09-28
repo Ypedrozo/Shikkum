@@ -8,6 +8,7 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import {
+  auth,
   db,
   isFirebaseConfigured,
   isFirestoreHealthy,
@@ -131,7 +132,7 @@ class PricingService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const colRef = collection(db, 'price_rules');
-        const snap = await withTimeout(getDocs(colRef), 3500, 'Consulta de reglas de precio excedió el límite.');
+        const snap = await withTimeout(getDocs(colRef), 8000, 'Consulta de reglas de precio excedió el límite.');
         const list: PriceRule[] = [];
         snap.forEach((docSnap) => {
           list.push({ id: docSnap.id, ...docSnap.data() } as PriceRule);
@@ -164,7 +165,7 @@ class PricingService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'price_rules', id);
-        const snap = await withTimeout(getDoc(docRef), 3500, 'Consulta de regla excedió el límite.');
+        const snap = await withTimeout(getDoc(docRef), 8000, 'Consulta de regla excedió el límite.');
         if (snap.exists()) {
           markFirestoreSuccess();
           return { id: snap.id, ...snap.data() } as PriceRule;
@@ -229,13 +230,17 @@ class PricingService {
 
     // Sincronizar en vivo con Firestore si la base de datos está disponible
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
-      try {
-        const docRef = doc(db, 'price_rules', newId);
-        await setDoc(docRef, newRule);
-        markFirestoreSuccess();
-      } catch (e: any) {
-        markFirestoreFailure(e);
-        console.warn('[PricingService] Regla guardada localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+      if (auth && auth.currentUser) {
+        try {
+          const docRef = doc(db, 'price_rules', newId);
+          await setDoc(docRef, newRule);
+          markFirestoreSuccess();
+        } catch (e: any) {
+          markFirestoreFailure(e);
+          console.warn('[PricingService] Regla guardada localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+        }
+      } else {
+        console.info('[PricingService] Regla guardada localmente (sesión local activa sin Firebase Auth directo).');
       }
     }
 
@@ -288,19 +293,23 @@ class PricingService {
 
     // Sincronizar en vivo con Firestore si la base de datos está disponible
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
-      try {
-        const docRef = doc(db, 'price_rules', id);
-        await updateDoc(docRef, {
-          ...updates,
-          maxAge: maxAgeValue,
-          currency: 'USD',
-          updatedAt: now,
-          updatedBy: operatorUid
-        });
-        markFirestoreSuccess();
-      } catch (e: any) {
-        markFirestoreFailure(e);
-        console.warn('[PricingService] Regla actualizada localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+      if (auth && auth.currentUser) {
+        try {
+          const docRef = doc(db, 'price_rules', id);
+          await updateDoc(docRef, {
+            ...updates,
+            maxAge: maxAgeValue,
+            currency: 'USD',
+            updatedAt: now,
+            updatedBy: operatorUid
+          });
+          markFirestoreSuccess();
+        } catch (e: any) {
+          markFirestoreFailure(e);
+          console.warn('[PricingService] Regla actualizada localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+        }
+      } else {
+        console.info('[PricingService] Regla actualizada localmente (sesión local activa sin Firebase Auth directo).');
       }
     }
 
@@ -323,13 +332,17 @@ class PricingService {
     this.saveLocalRules(filtered);
 
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
-      try {
-        const docRef = doc(db, 'price_rules', id);
-        await deleteDoc(docRef);
-        markFirestoreSuccess();
-      } catch (e: any) {
-        markFirestoreFailure(e);
-        console.warn('[PricingService] Regla eliminada localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+      if (auth && auth.currentUser) {
+        try {
+          const docRef = doc(db, 'price_rules', id);
+          await deleteDoc(docRef);
+          markFirestoreSuccess();
+        } catch (e: any) {
+          markFirestoreFailure(e);
+          console.warn('[PricingService] Regla eliminada localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+        }
+      } else {
+        console.info('[PricingService] Regla eliminada localmente (sesión local activa sin Firebase Auth directo).');
       }
     }
   }

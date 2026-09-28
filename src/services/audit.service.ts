@@ -80,7 +80,7 @@ class AuditService {
 
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        await withTimeout(setDoc(doc(db, 'audit_logs', auditId), logEntry), 3500);
+        await withTimeout(setDoc(doc(db, 'audit_logs', auditId), logEntry), 8000);
         markFirestoreSuccess();
       } catch (err) {
         markFirestoreFailure(err);
@@ -101,7 +101,7 @@ class AuditService {
           where('entityId', '==', entityId),
           limit(50)
         );
-        const snap = await withTimeout(getDocs(q), 3500);
+        const snap = await withTimeout(getDocs(q), 8000);
         if (!snap.empty) {
           const list = snap.docs.map((d) => d.data() as AuditLog);
           list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -137,7 +137,7 @@ class AuditService {
           where('entityId', '==', orderId),
           limit(50)
         );
-        const directLogsSnap = await withTimeout(getDocs(q), 3500);
+        const directLogsSnap = await withTimeout(getDocs(q), 8000);
 
         const list: AuditLog[] = [];
         directLogsSnap.forEach((d) => list.push(d.data() as AuditLog));
@@ -165,7 +165,7 @@ class AuditService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const q = query(collection(db, 'audit_logs'), limit(limitCount));
-        const snap = await withTimeout(getDocs(q), 3500);
+        const snap = await withTimeout(getDocs(q), 8000);
         if (!snap.empty) {
           const list = snap.docs.map((d) => d.data() as AuditLog);
           list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());

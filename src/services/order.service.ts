@@ -504,7 +504,7 @@ class OrderService {
         try {
           const snap = await withTimeout(
             getDocs(query(collection(db, 'orders'), limit(200))),
-            3500,
+            8000,
             'Consulta de órdenes excedió el límite de tiempo.'
           );
           snap.forEach((d) => {
@@ -580,7 +580,7 @@ class OrderService {
       try {
         const snap = await withTimeout(
           getDoc(doc(db, 'orders', orderId)),
-          3500,
+          8000,
           'Consulta de orden excedió el límite de tiempo.'
         );
         if (snap.exists()) {
@@ -605,7 +605,7 @@ class OrderService {
       try {
         const snap = await withTimeout(
           getDocs(collection(db, 'orders', orderId, 'attendees')),
-          3500,
+          8000,
           'Consulta de asistentes excedió el límite de tiempo.'
         );
         const list: OrderAttendee[] = [];

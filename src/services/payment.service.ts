@@ -353,14 +353,14 @@ class PaymentService {
 
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        await withTimeout(setDoc(doc(db, 'payments', paymentId), newPayment), 1000);
+        await withTimeout(setDoc(doc(db, 'payments', paymentId), newPayment), 8000);
         if (isAutoConfirmed) {
           await withTimeout(
             updateDoc(doc(db, 'orders', order.id), {
               status: 'PAID',
               updatedAt: nowIso
             }),
-            1000
+            8000
           );
         }
       } catch (err: any) {
@@ -557,7 +557,7 @@ class PaymentService {
               updatedAt: nowIso
             })
           ]),
-          1000
+          8000
         );
       } catch (err: any) {
         markFirestoreFailure(err);
@@ -742,7 +742,7 @@ class PaymentService {
             rejectedAt: nowIso,
             updatedAt: nowIso
           }),
-          1000
+          8000
         );
       } catch (err: any) {
         markFirestoreFailure(err);
@@ -805,7 +805,7 @@ class PaymentService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const q = query(collection(db, 'payments'), limit(200));
-        const snap = await withTimeout(getDocs(q), 3500, 'Consulta de pagos excedió el límite.');
+        const snap = await withTimeout(getDocs(q), 8000, 'Consulta de pagos excedió el límite.');
         snap.forEach((d) => {
           payments.push({ id: d.id, paymentId: d.id, ...(d.data() as Omit<Payment, 'id'>) });
         });
@@ -855,7 +855,7 @@ class PaymentService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const q = query(collection(db, 'payments'), where('orderId', '==', orderId));
-        const snap = await withTimeout(getDocs(q), 3500, 'Consulta de pagos de la orden excedió el tiempo límite.');
+        const snap = await withTimeout(getDocs(q), 8000, 'Consulta de pagos de la orden excedió el tiempo límite.');
         const list: Payment[] = [];
         snap.forEach((d) => {
           list.push({ id: d.id, paymentId: d.id, ...(d.data() as Omit<Payment, 'id'>) });
@@ -894,7 +894,7 @@ class PaymentService {
   async getPaymentById(paymentId: string): Promise<Payment | null> {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
-        const snap = await withTimeout(getDoc(doc(db, 'payments', paymentId)), 3500, 'Consulta de pago excedió el tiempo límite.');
+        const snap = await withTimeout(getDoc(doc(db, 'payments', paymentId)), 8000, 'Consulta de pago excedió el tiempo límite.');
         if (snap.exists()) {
           markFirestoreSuccess();
           return { id: snap.id, paymentId: snap.id, ...(snap.data() as Omit<Payment, 'id'>) };

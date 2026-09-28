@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { authService } from '../../services/auth.service';
+import { OperationalModeBadge } from '../../components/OperationalStatusBar';
 import { Lock, Mail, AlertCircle, ArrowRight, ShieldCheck, KeyRound, Check, RefreshCw, X } from 'lucide-react';
 
 interface LoginProps {
@@ -96,9 +97,12 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             <p className="text-xs sm:text-sm text-slate-400 mt-1 font-medium">
               Plataforma de Eventos, Cobranzas y Accesos
             </p>
-            <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-[11px] text-slate-400">
-              <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Acceso restringido para personal autorizado</span>
+            <div className="mt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
+              <OperationalModeBadge />
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-[11px] text-slate-400">
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Acceso restringido para personal autorizado</span>
+              </div>
             </div>
           </div>
 
@@ -193,53 +197,55 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             </form>
           </div>
 
-          {/* Test Accounts Panel (Verificación de Criterios de Aceptación) */}
-          <div className="mt-6 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 sm:p-5">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <KeyRound className="w-4 h-4 text-indigo-400" />
-                <span className="text-xs font-bold text-slate-200">
-                  Cuentas de Verificación (Fase 2 - Criterios de Aceptación)
+          {/* Sandbox Demo Accounts Panel (Solo visible cuando Firebase no está configurado) */}
+          {testAccounts.length > 0 && (
+            <div className="mt-6 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 sm:p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-indigo-400" />
+                  <span className="text-xs font-bold text-slate-200">
+                    Cuentas de Demostración (Modo Sandbox Local)
+                  </span>
+                </div>
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                  Demo
                 </span>
               </div>
-              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                1-Click Test
-              </span>
-            </div>
 
-            <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
-              Haz clic en cualquier rol para autocompletar credenciales y probar la redirección y permisos RBAC:
-            </p>
+              <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
+                Haz clic en cualquier rol para simular el inicio de sesión y probar las pantallas y controles RBAC en sandbox:
+              </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {testAccounts.map((acc) => (
-                <button
-                  key={acc.email}
-                  type="button"
-                  onClick={() => handleQuickFill(acc.email, acc.password)}
-                  className={`text-left p-2.5 rounded-xl border transition flex flex-col justify-between ${
-                    acc.isActive
-                      ? 'bg-slate-950/70 hover:bg-slate-800/80 border-slate-800 hover:border-slate-700 text-slate-300'
-                      : 'bg-red-950/20 hover:bg-red-950/30 border-red-900/40 text-red-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between w-full mb-1">
-                    <span className="text-xs font-bold capitalize">
-                      {acc.displayName || (acc.role === 'gate_operator' ? 'Gate Operator' : acc.role)}
-                    </span>
-                    <span
-                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                        acc.isActive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/20 text-red-400'
-                      }`}
-                    >
-                      {acc.isActive ? 'Activo' : 'Inactivo (Escenario 7)'}
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-slate-400 truncate font-mono">{acc.email}</span>
-                </button>
-              ))}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {testAccounts.map((acc) => (
+                  <button
+                    key={acc.email}
+                    type="button"
+                    onClick={() => handleQuickFill(acc.email, 'sandbox-demo')}
+                    className={`text-left p-2.5 rounded-xl border transition flex flex-col justify-between ${
+                      acc.isActive
+                        ? 'bg-slate-950/70 hover:bg-slate-800/80 border-slate-800 hover:border-slate-700 text-slate-300'
+                        : 'bg-red-950/20 hover:bg-red-950/30 border-red-900/40 text-red-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full mb-1">
+                      <span className="text-xs font-bold capitalize">
+                        {acc.displayName || (acc.role === 'gate_operator' ? 'Gate Operator' : acc.role)}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                          acc.isActive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                        }`}
+                      >
+                        {acc.isActive ? 'Activo' : 'Inactivo'}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-slate-400 truncate font-mono">{acc.email}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 

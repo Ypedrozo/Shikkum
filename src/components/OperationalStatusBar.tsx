@@ -71,14 +71,12 @@ export const OperationalModeBadge: React.FC = () => {
     return (
       <div
         id="operational-mode-badge-prod"
-        className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-emerald-950/80 border border-emerald-500/30 text-emerald-300"
-        title={`Base de datos Firestore activa y conectada en proyecto: ${firebaseConfig.projectId}`}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-emerald-950/80 border border-emerald-500/30 text-emerald-300 shadow-sm"
+        title={`Conectado a Firebase Project: ${firebaseConfig.projectId}`}
       >
         <span className={`w-1.5 h-1.5 rounded-full ${isOnline && dbHealthy ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-400'}`} />
         <Database className="w-3.5 h-3.5 text-emerald-400" />
-        <span className="font-bold">FIRESTORE EN VIVO</span>
-        <span className="text-emerald-500/70">|</span>
-        <span className="text-emerald-400 font-mono text-[10px]">{firebaseConfig.projectId}</span>
+        <span className="font-bold">LIVE — {firebaseConfig.projectId}</span>
       </div>
     );
   }
@@ -86,11 +84,11 @@ export const OperationalModeBadge: React.FC = () => {
   return (
     <div
       id="operational-mode-badge-sandbox"
-      className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-950/80 border border-amber-500/30 text-amber-300"
-      title="Ejecutando en Sandbox de demostración local"
+      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-950/80 border border-amber-500/30 text-amber-300 shadow-sm"
+      title="Ejecutando en Sandbox Demo local sin conexión a Firebase"
     >
       <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-      <span className="font-bold">MODO DEMO / SANDBOX</span>
+      <span className="font-bold">SANDBOX DEMO</span>
     </div>
   );
 };

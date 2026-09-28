@@ -37,7 +37,7 @@ class EmailDispatchService {
           collection(db, 'email_dispatches'),
           where('orderId', '==', orderId)
         );
-        const snapshot = await withTimeout(getDocs(q), 3500, 'Consulta de despachos excedió el límite.');
+        const snapshot = await withTimeout(getDocs(q), 8000, 'Consulta de despachos excedió el límite.');
         const list: EmailDispatch[] = [];
         snapshot.forEach((d) => list.push(d.data() as EmailDispatch));
         markFirestoreSuccess();
@@ -75,7 +75,7 @@ class EmailDispatchService {
     if (isFirebaseConfigured && db && isFirestoreHealthy()) {
       try {
         const q = query(collection(db, 'email_dispatches'), limit(limitCount));
-        const snapshot = await withTimeout(getDocs(q), 3500, 'Consulta de despachos excedió el límite.');
+        const snapshot = await withTimeout(getDocs(q), 8000, 'Consulta de despachos excedió el límite.');
         const list: EmailDispatch[] = [];
         snapshot.forEach((d) => list.push(d.data() as EmailDispatch));
         markFirestoreSuccess();

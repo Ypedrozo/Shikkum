@@ -9,6 +9,7 @@ import {
   limit
 } from 'firebase/firestore';
 import {
+  auth,
   db,
   isFirebaseConfigured,
   isFirestoreHealthy,
@@ -76,7 +77,7 @@ class CustomerService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const colRef = collection(db, 'customers');
-        const snap = await withTimeout(getDocs(query(colRef, limit(200))), 3500, 'Consulta de clientes excedió el límite.');
+        const snap = await withTimeout(getDocs(query(colRef, limit(200))), 8000, 'Consulta de clientes excedió el límite.');
         const list: Customer[] = [];
         snap.forEach((docSnap) => {
           list.push({ id: docSnap.id, ...docSnap.data() } as Customer);
@@ -99,7 +100,7 @@ class CustomerService {
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
       try {
         const docRef = doc(db, 'customers', id);
-        const snap = await withTimeout(getDoc(docRef), 3500, 'Consulta de cliente excedió el límite.');
+        const snap = await withTimeout(getDoc(docRef), 8000, 'Consulta de cliente excedió el límite.');
         if (snap.exists()) {
           markFirestoreSuccess();
           return { id: snap.id, ...snap.data() } as Customer;
@@ -180,13 +181,17 @@ class CustomerService {
 
     // Sincronizar en vivo con Firestore si la base de datos está disponible
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
-      try {
-        const docRef = doc(db, 'customers', newId);
-        await setDoc(docRef, newCustomer);
-        markFirestoreSuccess();
-      } catch (e: any) {
-        markFirestoreFailure(e);
-        console.warn('[CustomerService] Cliente guardado localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+      if (auth && auth.currentUser) {
+        try {
+          const docRef = doc(db, 'customers', newId);
+          await setDoc(docRef, newCustomer);
+          markFirestoreSuccess();
+        } catch (e: any) {
+          markFirestoreFailure(e);
+          console.warn('[CustomerService] Cliente guardado localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+        }
+      } else {
+        console.info('[CustomerService] Cliente guardado localmente (sesión local activa sin Firebase Auth directo).');
       }
     }
 
@@ -232,17 +237,21 @@ class CustomerService {
 
     // Sincronizar en vivo con Firestore si la base de datos está disponible
     if (this.hasLiveFirebase() && db && isFirestoreHealthy()) {
-      try {
-        const docRef = doc(db, 'customers', id);
-        await updateDoc(docRef, {
-          ...updates,
-          updatedAt: now,
-          updatedBy: operatorUid
-        });
-        markFirestoreSuccess();
-      } catch (e: any) {
-        markFirestoreFailure(e);
-        console.warn('[CustomerService] Cliente actualizado localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+      if (auth && auth.currentUser) {
+        try {
+          const docRef = doc(db, 'customers', id);
+          await updateDoc(docRef, {
+            ...updates,
+            updatedAt: now,
+            updatedBy: operatorUid
+          });
+          markFirestoreSuccess();
+        } catch (e: any) {
+          markFirestoreFailure(e);
+          console.warn('[CustomerService] Cliente actualizado localmente; sincronización en la nube pendiente de permisos en Firebase:', e.message);
+        }
+      } else {
+        console.info('[CustomerService] Cliente actualizado localmente (sesión local activa sin Firebase Auth directo).');
       }
     }
 

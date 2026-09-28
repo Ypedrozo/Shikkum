@@ -82,7 +82,7 @@ class TicketService {
     if (isFirebaseConfigured && db && isFirestoreHealthy()) {
       try {
         const q = query(collection(db, 'tickets'), where('orderId', '==', orderId));
-        const snapshot = await withTimeout(getDocs(q), 3500, 'Consulta de boletos excedió el tiempo límite.');
+        const snapshot = await withTimeout(getDocs(q), 8000, 'Consulta de boletos excedió el tiempo límite.');
         const tickets: Ticket[] = [];
         snapshot.forEach((d) => tickets.push(d.data() as Ticket));
         markFirestoreSuccess();
@@ -105,7 +105,7 @@ class TicketService {
   async getTicketById(ticketId: string): Promise<Ticket | null> {
     if (isFirebaseConfigured && db && isFirestoreHealthy()) {
       try {
-        const snap = await withTimeout(getDoc(doc(db, 'tickets', ticketId)), 3500, 'Consulta de boleto excedió el tiempo límite.');
+        const snap = await withTimeout(getDoc(doc(db, 'tickets', ticketId)), 8000, 'Consulta de boleto excedió el tiempo límite.');
         if (snap.exists()) {
           markFirestoreSuccess();
           return snap.data() as Ticket;
@@ -136,7 +136,7 @@ class TicketService {
         const q = filter?.eventId
           ? query(collection(db, 'tickets'), where('eventId', '==', filter.eventId), limit(200))
           : query(collection(db, 'tickets'), limit(200));
-        const snapshot = await withTimeout(getDocs(q), 3500, 'Consulta de boletos excedió el tiempo límite.');
+        const snapshot = await withTimeout(getDocs(q), 8000, 'Consulta de boletos excedió el tiempo límite.');
         snapshot.forEach((d) => list.push(d.data() as Ticket));
         markFirestoreSuccess();
       } catch (err: any) {

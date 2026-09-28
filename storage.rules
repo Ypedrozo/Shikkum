@@ -10,7 +10,13 @@ service firebase.storage {
     function isAdminOrCashier() {
       return isAuthenticated() && (
         request.auth.token.role == 'admin' ||
-        request.auth.token.role == 'cashier'
+        request.auth.token.role == 'cashier' ||
+        (request.auth.token.email != null && (
+          request.auth.token.email.matches('(?i)admin@shikkum\\.com') ||
+          request.auth.token.email.matches('(?i)yeiberpedrozo@gmail\\.com') ||
+          request.auth.token.email.matches('(?i)cashier@shikkum\\.com') ||
+          request.auth.token.email.matches('(?i)cobranzas@shikkum\\.com')
+        ))
       );
     }
 

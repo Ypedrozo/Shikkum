@@ -3,12 +3,12 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 // https://vitejs.dev/config/
-export default defineConfig({
-  base: '/Shikkum/',
+export default defineConfig(({ command }) => ({
+  base: command === 'serve' ? '/' : (process.env.VITE_BASE_PATH || '/Shikkum/'),
   plugins: [react(), tailwindcss()],
   server: {
     port: 3000,
     host: '0.0.0.0',
     strictPort: true,
   },
-});
+}));

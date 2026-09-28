@@ -15,33 +15,40 @@ service cloud.firestore {
       return isAuthenticated() && (
         request.auth.token.role == 'admin' ||
         (request.auth.token.email != null && (
-          request.auth.token.email == 'admin@shikkum.com' ||
-          request.auth.token.email == 'yeiberpedrozo@gmail.com' ||
-          request.auth.token.email.matches('.*admin.*')
+          request.auth.token.email.matches('(?i)admin@shikkum\\.com') ||
+          request.auth.token.email.matches('(?i)yeiberpedrozo@gmail\\.com')
         )) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true)
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive != false)
       );
     }
 
     function isCashier() {
       return isAuthenticated() && (
         request.auth.token.role == 'cashier' ||
-        (request.auth.token.email != null && request.auth.token.email == 'cobranzas@shikkum.com') ||
+        isAdmin() ||
+        (request.auth.token.email != null && (
+          request.auth.token.email.matches('(?i)cobranzas@shikkum\\.com') ||
+          request.auth.token.email.matches('(?i)cashier@shikkum\\.com')
+        )) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cashier' &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true)
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive != false)
       );
     }
 
     function isGateOperator() {
       return isAuthenticated() && (
         request.auth.token.role == 'gate_operator' ||
-        (request.auth.token.email != null && request.auth.token.email == 'puerta@shikkum.com') ||
+        isAdmin() ||
+        (request.auth.token.email != null && (
+          request.auth.token.email.matches('(?i)puerta@shikkum\\.com') ||
+          request.auth.token.email.matches('(?i)gate@shikkum\\.com')
+        )) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'gate_operator' &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true)
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive != false)
       );
     }
 
@@ -50,8 +57,13 @@ service cloud.firestore {
       // Cualquier usuario autenticado puede leer su propio documento; el administrador puede leer todos.
       allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
 
-      // El usuario puede inicializar su propio documento al registrarse o el administrador
-      allow create: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      // El usuario solo puede inicializar su propio documento al registrarse si no se autoasigna role de admin
+      allow create: if isAdmin() || (
+        isAuthenticated() &&
+        isOwner(userId) &&
+        request.resource.data.role != 'admin' &&
+        request.resource.data.uid == userId
+      );
 
       // Actualización:
       // - El administrador puede modificar cualquier campo (incluyendo role e isActive).
