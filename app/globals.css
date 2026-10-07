@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; --ink: #182522; --muted: #697773; --paper: #f7f8f5; --green: #174f42; --lime: #d9f36b; }
+* { box-sizing: border-box; }
+html { min-height: 100%; }
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
+a { color: inherit; text-decoration: none; }
+::selection { background: #d9f36b; color: #182522; }
