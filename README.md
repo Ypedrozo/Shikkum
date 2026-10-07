@@ -1,39 +1,23 @@
 # Pórtico
+Sistema de registro y control de acceso QR con Next.js, Supabase/PostgreSQL y Resend.
 
-Plataforma SaaS para registro de personas y control de acceso con QR. Esta entrega cubre únicamente la Fase 1: estructura Next.js, Tailwind, clientes iniciales Supabase y portada. No implementa todavía base de datos, autenticación ni gestión de participantes.
+## Configuración de Supabase
+En Supabase abre SQL Editor y ejecuta supabase/migrations/202610070001_initial_access_control.sql.
+Crea el primer usuario desde Authentication → Users → Add user. Luego asigna el primer administrador:
 
-## Arquitectura propuesta
+~~~sql
+update public.user_profiles set role = 'ADMIN'
+where id = (select id from auth.users where email = 'tu-correo-admin');
+~~~
 
-El navegador y las páginas/acciones de Next.js llaman a Supabase usando el cliente anon y las cookies de sesión. PostgreSQL y RLS aplicarán la autorización. Las claves privilegiadas y Resend se reservarán para módulos de servidor cuando lleguen sus fases. No hace falta un servidor Node independiente.
+Crea las cuentas de operadores en Authentication; quedan con rol SCANNER. Deshabilita el registro público. Obtén Project URL y anon/publishable key en Project Settings → API. No expongas la service role en el navegador.
 
-## Estructura
+## Variables
+Copia .env.example a .env.local y configura NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_ANON_KEY. Para correo configura RESEND_API_KEY y RESEND_FROM_EMAIL. EVENT_NAME es opcional. La aplicación informa cuando falte Resend y no afirma que un mensaje se envió si falló. La service role no es necesaria.
 
-```text
-app/                 App Router: páginas, layout y estilos
-components/          Componentes compartidos de interfaz
-emails/              Plantillas para Resend
-lib/supabase/        Clientes de navegador y servidor
-services/            Casos de uso y lógica de negocio
-supabase/             Migraciones y configuración local (Fase 2)
-types/                Tipos compartidos
-public/               Recursos estáticos
-```
-
-## Ejecutar localmente
-
-Requisitos: Node.js 20.9+ y npm.
-
-1. Copia `.env.example` a `.env.local`.
-2. Para usar Supabase, completa `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY`. La portada no depende aún de esas credenciales.
-3. Ejecuta `npm install`, luego `npm run dev` y abre <http://localhost:3000>.
-4. Verifica producción local con `npm run build` y `npm start`.
-
-No incluyas valores reales en Git. `SUPABASE_SERVICE_ROLE_KEY` y `RESEND_API_KEY` son exclusivamente de servidor; no se utilizan en esta fase. El cliente inicial usa la clave pública anon y depende de RLS.
-
-## GitHub y Vercel
-
-Inicializa Git con `git init`, crea un repositorio GitHub y enlázalo con `git remote add origin <URL-del-repositorio>`. En Vercel, importa el repositorio, conserva el preset Next.js y configura `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY` para Preview y Production cuando se conecte Supabase. La portada puede desplegarse antes sin ellas. Las claves de Resend y service role se añadirán únicamente a las variables server-side en las fases correspondientes.
-
-## Dependencias principales
-
-Next.js App Router, React, TypeScript, Tailwind CSS 4 y `@supabase/ssr`/`@supabase/supabase-js`. QR, cámara y Resend se incorporarán después.
+## Ejecutar
+~~~sh
+npm install
+npm run dev
+~~~
+Abre http://localhost:3000. La cámara requiere localhost o HTTPS. En Vercel añade las variables en Settings → Environment Variables. Ejecuta la migración en Supabase antes de utilizar la aplicación.
