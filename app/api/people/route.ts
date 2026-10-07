@@ -24,6 +24,9 @@ export async function POST(request: Request) {
     const body = await request.json();
     const fields = ["firstName","lastName","email","identification","phone"] as const;
     for (const k of fields) if (typeof body[k] !== "string" || !body[k].trim()) return Response.json({ error: "Completa todos los campos." }, { status: 400 });
+    const limits: Record<string, number> = { firstName: 100, lastName: 100, email: 254, identification: 50, phone: 30 };
+    for (const [key, max] of Object.entries(limits)) if (body[key].trim().length > max) return Response.json({ error: "Revisa la longitud de los campos ingresados." }, { status: 400 });
+    if (!/^[+()\d\s.-]{5,30}$/.test(body.phone.trim())) return Response.json({ error: "Ingresa un teléfono válido." }, { status: 400 });
     const email = body.email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return Response.json({ error: "Ingresa un correo válido." }, { status: 400 });
     const token = randomBytes(32).toString("base64url");
@@ -36,3 +39,4 @@ export async function POST(request: Request) {
     return Response.json({ participant: data, email: emailResult.ok ? "sent" : "failed", emailMessage: emailResult.ok ? null : emailResult.error }, { status: 201 });
   } catch (e) { return Response.json({ error: safeError(e) }, { status: 500 }); }
 }
+
