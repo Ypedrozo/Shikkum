@@ -1,37 +1,45 @@
-# Shikkum
+# Shikkum · control de acceso QR
 
-Aplicación Next.js de registro de invitados, entradas QR personales y control de acceso, conectada a Supabase/PostgreSQL y Resend.
-
-## Configurar Supabase
-
-En el proyecto `oiektdosylghnjlrcngc`, abre **SQL Editor** y ejecuta las migraciones en orden:
-
-1. `supabase/migrations/202610070001_initial_access_control.sql` (solo si la estructura inicial aún no existe).
-2. `supabase/migrations/202610120001_guest_groups_tickets.sql`.
-
-La segunda migración conserva los registros actuales, agrega grupos/tickets y el RPC atómico para registrar, anular y validar entradas. No habilites el registro público de usuarios. Crea usuarios desde **Authentication → Users**; asigna sus roles en `public.user_profiles`: `ADMIN`, `cashier` o `gate_operator` (`SCANNER` existente sigue funcionando como rol legado).
-
-## Variables de entorno
-
-Copia `.env.example` a `.env.local` y completa:
-
-- `NEXT_PUBLIC_SUPABASE_URL`: Project URL.
-- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`: publishable key del proyecto Supabase.
-- `RESEND_API_KEY` y `RESEND_FROM_EMAIL`: credenciales del servidor. El remitente debe estar habilitado en Resend para enviar a tus destinatarios.
-- `NEXT_PUBLIC_SITE_URL`: URL pública del sitio, especialmente la de producción; se usa en los enlaces de QR.
-- `EVENT_NAME`: opcional.
-
-No configures `SUPABASE_SERVICE_ROLE_KEY` en el navegador. Esta aplicación usa la sesión de cada usuario, RLS y funciones SQL con permisos acotados.
+Aplicación web en HTML, CSS y JavaScript sin framework de interfaz. PostgreSQL/Supabase conserva autenticación, RLS, registro de entradas y validación atómica; las funciones de Vercel gestionan correo y operaciones protegidas.
 
 ## Ejecutar localmente
 
-~~~sh
-npm install
-npm run dev
-~~~
+1. Instala Node.js LTS.
+2. Copia `.env.example` como `.env.local` y completa las variables con los valores del proyecto Supabase y Resend.
+3. Ejecuta `npm install`, luego `npm run dev`.
+4. Abre `http://localhost:3000`.
 
-Abre `http://localhost:3000`. La cámara funciona en localhost o HTTPS y requiere permiso del navegador.
+No compartas `.env.local`. El navegador recibe únicamente la URL y la publishable key de Supabase. Las claves de Resend nunca se envían al cliente.
 
-## Desplegar en Vercel
+## Variables de entorno
 
-Importa el repositorio `Shikkum`, añade las variables anteriores en **Settings → Environment Variables** para Production y Preview, fija `NEXT_PUBLIC_SITE_URL` en el dominio de producción, y vuelve a desplegar. La migración SQL debe estar aplicada en Supabase antes del primer registro.
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `RESEND_API_KEY`
+- `RESEND_FROM_EMAIL` (dominio/emisor verificado en Resend)
+- `NEXT_PUBLIC_SITE_URL` (en producción: `https://shikkum.vercel.app`)
+- `EVENT_NAME` (opcional)
+
+En Vercel, configura esas variables para Production y Preview según corresponda y vuelve a desplegar.
+
+## Funcionalidades
+
+- Inicio de sesión Supabase con roles ADMIN/cashier y SCANNER/gate_operator.
+- Dashboard real, registros, búsqueda, filtros, QR, anulación y reenvío de email.
+- Registro transaccional mediante `register_guest_group`; tokens aleatorios creados por PostgreSQL.
+- Email real con Resend; la interfaz muestra enviado solo con respuesta exitosa del proveedor.
+- QR público y descargable. WhatsApp abre el chat de compartir con el enlace de la entrada; el envío lo confirma la persona operadora desde WhatsApp.
+- Scanner de cámara con `html5-qrcode`; el check-in usa `check_in_qr` en PostgreSQL con bloqueo de fila para evitar doble ingreso concurrente.
+- Las funciones validan sesión/rol en servidor y consultan con publishable key más el JWT del usuario; no usan service role.
+
+## Base de datos y seguridad
+
+La aplicación reutiliza las tablas y funciones que ya están en `supabase/`. No ejecuta migraciones automáticamente ni borra datos. Las reglas RLS y funciones SECURITY DEFINER del esquema protegen operaciones críticas.
+
+## Comprobaciones
+
+- `npm run lint`: verificación sintáctica de JavaScript.
+- `npm run build`: comprueba que estén todos los archivos de la aplicación.
+- `npm run dev`: servidor local que sirve el sitio y las funciones API.
+
+El escaneo de cámara requiere HTTPS en producción o `localhost` en desarrollo. La librería de cámara se carga desde un CDN.
