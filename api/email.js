@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     const recipient = ticket.email || group.email;
     if (!recipient) return json(res, 400, { error: "Esta entrada no tiene un correo asignado." });
     const result = await sendTicketEmail({ req, supabase, userId: user.id, ticket, group, recipient });
-    return json(res, result.status === "sent" ? 200 : 503, result);
+    return json(res, result.status === "sent" ? 200 : 503, result.status === "sent" ? result : { ...result, error: result.message });
   } catch (error) {
     if (authErrorResponse(error, res)) return;
     return json(res, 500, { error: "No fue posible enviar el correo." });
