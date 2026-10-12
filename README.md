@@ -1,23 +1,37 @@
-# Pórtico
-Sistema de registro y control de acceso QR con Next.js, Supabase/PostgreSQL y Resend.
+# Shikkum
 
-## Configuración de Supabase
-En Supabase abre SQL Editor y ejecuta supabase/migrations/202610070001_initial_access_control.sql.
-Crea el primer usuario desde Authentication → Users → Add user. Luego asigna el primer administrador:
+Aplicación Next.js de registro de invitados, entradas QR personales y control de acceso, conectada a Supabase/PostgreSQL y Resend.
 
-~~~sql
-update public.user_profiles set role = 'ADMIN'
-where id = (select id from auth.users where email = 'tu-correo-admin');
-~~~
+## Configurar Supabase
 
-Crea las cuentas de operadores en Authentication; quedan con rol SCANNER. Deshabilita el registro público. Obtén Project URL y anon/publishable key en Project Settings → API. No expongas la service role en el navegador.
+En el proyecto `oiektdosylghnjlrcngc`, abre **SQL Editor** y ejecuta las migraciones en orden:
 
-## Variables
-Copia .env.example a .env.local y configura NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_ANON_KEY. Para correo configura RESEND_API_KEY y RESEND_FROM_EMAIL. EVENT_NAME es opcional. La aplicación informa cuando falte Resend y no afirma que un mensaje se envió si falló. La service role no es necesaria.
+1. `supabase/migrations/202610070001_initial_access_control.sql` (solo si la estructura inicial aún no existe).
+2. `supabase/migrations/202610120001_guest_groups_tickets.sql`.
 
-## Ejecutar
+La segunda migración conserva los registros actuales, agrega grupos/tickets y el RPC atómico para registrar, anular y validar entradas. No habilites el registro público de usuarios. Crea usuarios desde **Authentication → Users**; asigna sus roles en `public.user_profiles`: `ADMIN`, `cashier` o `gate_operator` (`SCANNER` existente sigue funcionando como rol legado).
+
+## Variables de entorno
+
+Copia `.env.example` a `.env.local` y completa:
+
+- `NEXT_PUBLIC_SUPABASE_URL`: Project URL.
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`: publishable key del proyecto Supabase.
+- `RESEND_API_KEY` y `RESEND_FROM_EMAIL`: credenciales del servidor. El remitente debe estar habilitado en Resend para enviar a tus destinatarios.
+- `NEXT_PUBLIC_SITE_URL`: URL pública del sitio, especialmente la de producción; se usa en los enlaces de QR.
+- `EVENT_NAME`: opcional.
+
+No configures `SUPABASE_SERVICE_ROLE_KEY` en el navegador. Esta aplicación usa la sesión de cada usuario, RLS y funciones SQL con permisos acotados.
+
+## Ejecutar localmente
+
 ~~~sh
 npm install
 npm run dev
 ~~~
-Abre http://localhost:3000. La cámara requiere localhost o HTTPS. En Vercel añade las variables en Settings → Environment Variables. Ejecuta la migración en Supabase antes de utilizar la aplicación.
+
+Abre `http://localhost:3000`. La cámara funciona en localhost o HTTPS y requiere permiso del navegador.
+
+## Desplegar en Vercel
+
+Importa el repositorio `Shikkum`, añade las variables anteriores en **Settings → Environment Variables** para Production y Preview, fija `NEXT_PUBLIC_SITE_URL` en el dominio de producción, y vuelve a desplegar. La migración SQL debe estar aplicada en Supabase antes del primer registro.

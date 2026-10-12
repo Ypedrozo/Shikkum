@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-type Result={result:string;participant?:{first_name:string;last_name:string;checked_in_at:string|null}};
+type Result={result:string;participant?:{first_name:string|null;last_name:string|null;ticket_number:number|null;is_placeholder:boolean;checked_in_at:string|null}};
 const copy:Record<string,[string,string]>={authorized:["✓ INGRESO AUTORIZADO","success"],already_used:["⚠ USUARIO YA REGISTRADO","warning"],cancelled:["⚠ QR ANULADO","warning"],invalid:["⚠ QR NO VÁLIDO","error"]};
 export function Scanner() {
  const ref=useRef<any>(null),busy=useRef(false);const [message,setMessage]=useState("");const [result,setResult]=useState<Result|null>(null);const [scanning,setScanning]=useState(false);const [error,setError]=useState("");
@@ -23,6 +23,6 @@ export function Scanner() {
  const outcome=result?copy[result.result]:null;
  return <div className="scannerlayout"><div className="scannercard"><div id="qr-reader" className="reader"/>{message&&<p className="muted center">{message}</p>}{error&&<p className="notice error">{error}</p>}
  {!scanning?<button className="button primary full" onClick={start}>📷 Activar cámara</button>:<button className="button secondary full" onClick={stop}>Detener cámara</button>}</div>
- {result&&outcome&&<section className={`scanresult ${outcome[1]}`}><h2>{outcome[0]}</h2>{result.participant&&<><p className="personname">{result.participant.first_name} {result.participant.last_name}</p><p>{result.result==="authorized"?"Hora": "Ingresó"}: {result.participant.checked_in_at?new Date(result.participant.checked_in_at).toLocaleString("es-EC",{hour12:false}):"—"}</p></>}<button className="button secondary" onClick={resume}>Escanear siguiente</button></section>}
+ {result&&outcome&&<section className={`scanresult ${outcome[1]}`}><h2>{outcome[0]}</h2>{result.participant&&<><p className="personname">{result.participant.is_placeholder?`Invitado por asignar · Entrada ${result.participant.ticket_number??""}`:[result.participant.first_name,result.participant.last_name].filter(Boolean).join(" ")||"Invitado"}</p><p>{result.result==="authorized"?"Hora": "Ingresó"}: {result.participant.checked_in_at?new Date(result.participant.checked_in_at).toLocaleString("es-EC",{hour12:false}):"—"}</p></>}<button className="button secondary" onClick={resume}>Escanear siguiente</button></section>}
  <p className="scannerhint">Apunta la cámara al código QR. El resultado se valida directamente en Supabase.</p></div>
 }

@@ -1,6 +1,6 @@
 import { authorizedApi, safeError } from "@/lib/server";
 export async function POST(request: Request) {
- const auth=await authorizedApi(["ADMIN","SCANNER"]); if("error" in auth)return auth.error;
+ const auth=await authorizedApi(["gate_operator"]); if("error" in auth)return auth.error;
  try {
   const {token,deviceInfo}=await request.json();
   if(typeof token!=="string"||!token.trim())return Response.json({error:"El QR no contiene un código válido."},{status:400});
