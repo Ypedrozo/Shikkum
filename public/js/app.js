@@ -1,6 +1,6 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+const createClient=window.supabase.createClient;
 const root=document.querySelector("#app"),toast=document.querySelector("#toast");
-const configResponse=await fetch("/api/config"),config=await configResponse.json();
+let configResponse,config;try{configResponse=await fetch("/api/config",{signal:AbortSignal.timeout(10000)});config=await configResponse.json()}catch{configResponse={ok:false};config={error:"No fue posible conectarse con el servidor."}}
 if(!configResponse.ok){root.innerHTML=`<main class="login-wrap"><section class="card login-card"><div class="brand"><span class="brand-icon">S</span> shikkum</div><p class="eyebrow">CONFIGURACIÓN PENDIENTE</p><h1>Conecta Supabase</h1><p>${escapeHtml(config.error||"Revisa la configuración del servidor.")}</p><p class="muted">En Vercel configura NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.</p></section></main>`}else{
 const supabase=createClient(config.url,config.key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});let session=null,profile=null,toastTimer,scanner=null,peopleCache=[],renderSequence=0;
 const showToast=(message,kind="")=>{toast.textContent=message;toast.className=`toast visible ${kind}`;clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.className="toast",4000)};

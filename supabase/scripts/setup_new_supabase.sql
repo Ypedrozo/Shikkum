@@ -240,7 +240,7 @@ begin
        or (v_identification is not null and length(v_identification)>50)
     then raise exception 'invalid attendee data' using errcode='22023'; end if;
 
-    v_token := replace(replace(rtrim(encode(public.gen_random_bytes(32),'base64'),'='),'+','-'),'/','_');
+    v_token := replace(pg_catalog.gen_random_uuid()::text,'-','');
     insert into public.participants(
       first_name,last_name,email,identification,phone,token,registered_by,
       group_id,ticket_number,is_placeholder
